@@ -98,6 +98,9 @@ func main() {
 
 		// Composite endpoint — full dashboard payload in one call
 		api.GET("/dashboard", handlers.GetDashboard)
+
+		// Monitored locations — global city AQI for globe markers
+		api.GET("/locations", handlers.GetMonitoredLocations)
 	}
 
 	log.Printf("Prexus Atmos API Gateway starting on :%s", port)
