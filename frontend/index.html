@@ -1,0 +1,1614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Prexus Atmos — Planetary Intelligence</title>
+
+<!-- CesiumJS -->
+<script src="https://cesium.com/downloads/cesiumjs/releases/1.122/Build/Cesium/Cesium.js"></script>
+<link href="https://cesium.com/downloads/cesiumjs/releases/1.122/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+
+<style>
+/* ─── Reset & Fonts ─────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;500;600;700;800&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:          #050810;
+  --surface:     rgba(255,255,255,0.032);
+  --surface-hi:  rgba(255,255,255,0.065);
+  --border:      rgba(255,255,255,0.08);
+  --border-hi:   rgba(255,255,255,0.16);
+  --text:        #e8ecf4;
+  --text-dim:    rgba(232,236,244,0.45);
+  --text-faint:  rgba(232,236,244,0.22);
+
+  /* AQI colours */
+  --aqi-good:    #00e676;
+  --aqi-mod:     #ffea00;
+  --aqi-usg:     #ff9100;
+  --aqi-unhl:    #ff1744;
+  --aqi-vunhl:   #d500f9;
+  --aqi-haz:     #c62828;
+
+  /* Accent */
+  --cyan:  #00d4ff;
+  --blue:  #2979ff;
+  --green: #00e676;
+  --amber: #ffab00;
+  --red:   #ff1744;
+
+  --radius: 10px;
+  --font-mono: 'Space Mono', monospace;
+  --font-ui:   'Syne', sans-serif;
+}
+
+html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+
+body {
+  font-family: var(--font-ui);
+  color: var(--text);
+  display: grid;
+  grid-template-rows: 48px 1fr;
+  grid-template-columns: 280px 1fr 320px;
+  grid-template-areas:
+    "header header header"
+    "left   globe  right";
+}
+
+/* ─── Header ────────────────────────────────────────────────────────────── */
+header {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 16px;
+  background: rgba(5,8,16,0.95);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+  z-index: 100;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-ui);
+  font-weight: 800;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.logo-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 10px var(--cyan);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%,100% { opacity: 1; box-shadow: 0 0 6px var(--cyan); }
+  50%      { opacity: 0.4; box-shadow: 0 0 18px var(--cyan); }
+}
+
+.header-location {
+  margin-left: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.header-location span { color: var(--cyan); }
+
+.header-time {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+}
+
+.header-live {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--green);
+  text-transform: uppercase;
+}
+.live-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+.nav-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 24px;
+}
+.nav-tab {
+  padding: 4px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.18s;
+  border: 1px solid transparent;
+}
+.nav-tab:hover { color: var(--text); background: var(--surface-hi); }
+.nav-tab.active { color: var(--cyan); border-color: rgba(0,212,255,0.25); background: rgba(0,212,255,0.06); }
+
+/* ─── Layer toggles ─────────────────────────────────────────────────────── */
+.layer-toggles {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+}
+.layer-btn {
+  padding: 3px 10px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  cursor: pointer;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  transition: all 0.18s;
+}
+.layer-btn.on { color: var(--cyan); border-color: rgba(0,212,255,0.4); background: rgba(0,212,255,0.08); }
+.layer-btn:hover { border-color: var(--border-hi); color: var(--text); }
+
+/* ─── Left Panel ────────────────────────────────────────────────────────── */
+#left-panel {
+  grid-area: left;
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  background: rgba(5,8,16,0.75);
+  border-right: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+}
+#left-panel::-webkit-scrollbar { width: 3px; }
+#left-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ─── Right Panel ───────────────────────────────────────────────────────── */
+#right-panel {
+  grid-area: right;
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  background: rgba(5,8,16,0.75);
+  border-left: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+}
+#right-panel::-webkit-scrollbar { width: 3px; }
+#right-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ─── Globe ─────────────────────────────────────────────────────────────── */
+#globe-container {
+  grid-area: globe;
+  position: relative;
+  overflow: hidden;
+}
+#cesium-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* Hide Cesium credits */
+.cesium-credit-container,
+.cesium-credit-expand-link { display: none !important; }
+
+/* Search overlay */
+.globe-search {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.globe-search input {
+  width: 280px;
+  padding: 8px 14px;
+  background: rgba(5,8,16,0.88);
+  border: 1px solid var(--border-hi);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+  backdrop-filter: blur(12px);
+}
+.globe-search input::placeholder { color: var(--text-faint); }
+.globe-search input:focus { border-color: var(--cyan); }
+
+.globe-search button {
+  padding: 8px 16px;
+  background: rgba(0,212,255,0.12);
+  border: 1px solid rgba(0,212,255,0.35);
+  border-radius: 6px;
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.05em;
+  transition: all 0.18s;
+}
+.globe-search button:hover { background: rgba(0,212,255,0.22); }
+
+/* AQI HUD */
+.globe-hud {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+.hud-card {
+  padding: 10px 16px;
+  background: rgba(5,8,16,0.88);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-align: center;
+  backdrop-filter: blur(12px);
+  min-width: 80px;
+}
+.hud-label { font-size: 9px; font-family: var(--font-mono); letter-spacing: 0.1em; color: var(--text-faint); text-transform: uppercase; }
+.hud-value { font-size: 22px; font-family: var(--font-mono); font-weight: 700; line-height: 1.2; margin-top: 2px; }
+.hud-sub { font-size: 9px; color: var(--text-dim); margin-top: 1px; }
+
+/* ─── Cards ─────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.card-title {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 10px;
+}
+
+/* AQI big display */
+.aqi-display {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.aqi-num {
+  font-family: var(--font-mono);
+  font-size: 52px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.aqi-meta { flex: 1; min-width: 0; }
+.aqi-level {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.aqi-health {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+.aqi-bar {
+  height: 4px;
+  border-radius: 2px;
+  margin-top: 8px;
+  background: linear-gradient(90deg,
+    #00e676 0%, #ffea00 33%, #ff9100 50%, #ff1744 67%, #d500f9 83%, #c62828 100%);
+  position: relative;
+}
+.aqi-bar-marker {
+  position: absolute;
+  top: -3px;
+  width: 10px; height: 10px;
+  background: white;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  transform: translateX(-50%);
+  box-shadow: 0 0 8px rgba(255,255,255,0.5);
+  transition: left 0.6s cubic-bezier(0.4,0,0.2,1);
+}
+
+/* Grid stat layout */
+.stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.stat-item {}
+.stat-label {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.stat-value {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+  margin-top: 1px;
+}
+.stat-unit {
+  font-size: 9px;
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+/* Pollutant bars */
+.pollutant-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.pollutant-name {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  width: 44px;
+  flex-shrink: 0;
+}
+.pollutant-bar-track {
+  flex: 1;
+  height: 4px;
+  background: var(--surface-hi);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.pollutant-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.8s cubic-bezier(0.4,0,0.2,1);
+}
+.pollutant-value {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text);
+  width: 52px;
+  text-align: right;
+}
+
+/* Forecast row */
+.forecast-scroll {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.forecast-scroll::-webkit-scrollbar { height: 2px; }
+.forecast-scroll::-webkit-scrollbar-thumb { background: var(--border); }
+.forecast-day {
+  flex-shrink: 0;
+  padding: 8px 10px;
+  background: var(--surface-hi);
+  border-radius: 7px;
+  text-align: center;
+  border: 1px solid var(--border);
+  min-width: 60px;
+}
+.forecast-day-name { font-size: 9px; color: var(--text-faint); font-family: var(--font-mono); letter-spacing: 0.08em; }
+.forecast-day-icon { font-size: 18px; margin: 4px 0; }
+.forecast-day-hi { font-family: var(--font-mono); font-size: 12px; font-weight: 700; }
+.forecast-day-lo { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
+.forecast-day-rain { font-size: 9px; color: #29b6f6; margin-top: 2px; }
+
+/* Hourly sparkline */
+.sparkline-wrap { position: relative; }
+.sparkline-canvas { width: 100%; height: 52px; }
+
+/* Alert cards */
+.alert-item {
+  padding: 8px 10px;
+  border-radius: 7px;
+  border-left: 3px solid;
+  margin-bottom: 6px;
+  background: var(--surface-hi);
+}
+.alert-item.critical { border-color: var(--red); background: rgba(255,23,68,0.08); }
+.alert-item.high     { border-color: var(--amber); background: rgba(255,171,0,0.07); }
+.alert-item.medium   { border-color: var(--cyan); background: rgba(0,212,255,0.06); }
+.alert-title { font-size: 11px; font-weight: 700; letter-spacing: 0.03em; }
+.alert-message { font-size: 10px; color: var(--text-dim); margin-top: 3px; line-height: 1.4; }
+.alert-item.critical .alert-title { color: var(--red); }
+.alert-item.high     .alert-title { color: var(--amber); }
+.alert-item.medium   .alert-title { color: var(--cyan); }
+
+/* Risk groups */
+.risk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.risk-group { font-size: 10px; color: var(--text-dim); flex: 1; }
+.risk-badge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.risk-good     { background: rgba(0,230,118,0.15); color: var(--aqi-good); }
+.risk-moderate { background: rgba(255,234,0,0.12); color: var(--aqi-mod); }
+.risk-high     { background: rgba(255,23,68,0.15);  color: var(--aqi-unhl); }
+.risk-extreme  { background: rgba(197,40,40,0.2);   color: #ef9a9a; }
+
+/* Wind compass */
+.wind-compass {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.compass-ring {
+  width: 60px; height: 60px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-hi);
+  position: relative;
+  flex-shrink: 0;
+}
+.compass-arrow {
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 2px; height: 22px;
+  background: linear-gradient(to top, var(--cyan), transparent);
+  transform-origin: bottom center;
+  transform: translate(-50%, -100%);
+  border-radius: 1px;
+  transition: transform 0.8s ease;
+}
+.compass-n {
+  position: absolute;
+  top: 4px; left: 50%;
+  transform: translateX(-50%);
+  font-size: 8px; font-family: var(--font-mono);
+  color: var(--text-faint);
+}
+.wind-stats { flex: 1; }
+.wind-stat { margin-bottom: 4px; }
+
+/* Fire marker */
+.fire-list { display: flex; flex-direction: column; gap: 5px; }
+.fire-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--surface-hi);
+  border-radius: 6px;
+  font-size: 10px;
+}
+.fire-icon { font-size: 14px; }
+.fire-coords { font-family: var(--font-mono); color: var(--text-dim); font-size: 9px; }
+.fire-frp { font-family: var(--font-mono); font-weight: 700; color: var(--amber); margin-left: auto; font-size: 11px; }
+
+/* Loading state */
+.loading-shimmer {
+  background: linear-gradient(90deg, var(--surface) 25%, var(--surface-hi) 50%, var(--surface) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 4px;
+  height: 14px;
+  margin-bottom: 4px;
+}
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+.section-empty {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  text-align: center;
+  padding: 12px;
+}
+
+/* Error toasts */
+.toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.toast {
+  padding: 10px 16px;
+  background: rgba(5,8,16,0.96);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  max-width: 280px;
+  animation: toast-in 0.3s ease;
+}
+.toast.error { border-color: rgba(255,23,68,0.4); color: #ef9a9a; }
+@keyframes toast-in { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: none; } }
+
+/* Spinner */
+.spinner {
+  width: 16px; height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--cyan);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Tabs view switching */
+.panel-view { display: flex; flex-direction: column; gap: 10px; }
+.panel-view.hidden { display: none; }
+</style>
+</head>
+
+<body>
+
+<!-- ─── Header ─────────────────────────────────────────────────────────── -->
+<header>
+  <div class="logo">
+    <div class="logo-dot"></div>
+    Prexus Atmos
+  </div>
+  <div class="header-location">
+    <span id="hdr-city">—</span>
+    <span id="hdr-coords">—</span>
+  </div>
+  <div class="nav-tabs">
+    <div class="nav-tab active" data-view="overview">Overview</div>
+    <div class="nav-tab" data-view="forecast">Forecast</div>
+    <div class="nav-tab" data-view="fires">Fires</div>
+    <div class="nav-tab" data-view="analytics">Analytics</div>
+  </div>
+  <div class="layer-toggles">
+    <button class="layer-btn on" id="btn-aqi-layer">AQI</button>
+    <button class="layer-btn" id="btn-fire-layer">FIRES</button>
+    <button class="layer-btn" id="btn-wind-layer">WIND</button>
+  </div>
+  <div style="margin-left:auto; display:flex; align-items:center; gap:12px;">
+    <div class="header-live"><div class="live-dot"></div> Live</div>
+    <div class="header-time" id="hdr-time">—</div>
+  </div>
+</header>
+
+<!-- ─── Left Panel ─────────────────────────────────────────────────────── -->
+<div id="left-panel">
+
+  <!-- AQI -->
+  <div class="card" id="card-aqi">
+    <div class="card-title">Air Quality Index</div>
+    <div class="aqi-display">
+      <div class="aqi-num" id="aqi-num" style="color: var(--aqi-good)">—</div>
+      <div class="aqi-meta">
+        <div class="aqi-level" id="aqi-level">Loading…</div>
+        <div class="aqi-health" id="aqi-health"></div>
+      </div>
+    </div>
+    <div class="aqi-bar" style="margin-top:10px;">
+      <div class="aqi-bar-marker" id="aqi-marker" style="left:0%"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:4px;">
+      <span style="font-size:8px;color:var(--text-faint);font-family:var(--font-mono)">0</span>
+      <span style="font-size:8px;color:var(--text-faint);font-family:var(--font-mono)">500</span>
+    </div>
+  </div>
+
+  <!-- Pollutants -->
+  <div class="card" id="card-pollutants">
+    <div class="card-title">Pollutants</div>
+    <div id="pollutant-list">
+      <div class="loading-shimmer"></div>
+      <div class="loading-shimmer" style="width:80%"></div>
+      <div class="loading-shimmer" style="width:60%"></div>
+    </div>
+  </div>
+
+  <!-- Wind -->
+  <div class="card">
+    <div class="card-title">Wind</div>
+    <div class="wind-compass">
+      <div class="compass-ring">
+        <div class="compass-n">N</div>
+        <div class="compass-arrow" id="wind-arrow"></div>
+      </div>
+      <div class="wind-stats">
+        <div class="wind-stat">
+          <div class="stat-label">Speed</div>
+          <div class="stat-value"><span id="wind-speed">—</span><span class="stat-unit"> km/h</span></div>
+        </div>
+        <div class="wind-stat">
+          <div class="stat-label">Gusts</div>
+          <div class="stat-value"><span id="wind-gust">—</span><span class="stat-unit"> km/h</span></div>
+        </div>
+        <div class="wind-stat">
+          <div class="stat-label">Direction</div>
+          <div class="stat-value" id="wind-dir">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Current conditions -->
+  <div class="card">
+    <div class="card-title">Conditions</div>
+    <div class="stat-grid">
+      <div class="stat-item">
+        <div class="stat-label">Temperature</div>
+        <div class="stat-value"><span id="wx-temp">—</span><span class="stat-unit">°C</span></div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">Feels Like</div>
+        <div class="stat-value"><span id="wx-feels">—</span><span class="stat-unit">°C</span></div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">Humidity</div>
+        <div class="stat-value"><span id="wx-humid">—</span><span class="stat-unit">%</span></div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">Pressure</div>
+        <div class="stat-value"><span id="wx-pressure">—</span><span class="stat-unit">hPa</span></div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">UV Index</div>
+        <div class="stat-value" id="wx-uv">—</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">Visibility</div>
+        <div class="stat-value"><span id="wx-vis">—</span><span class="stat-unit">km</span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ─── Globe ───────────────────────────────────────────────────────────── -->
+<div id="globe-container">
+  <div id="cesium-container"></div>
+
+  <div class="globe-search">
+    <input type="text" id="search-input" placeholder="Search city or coordinates…" />
+    <button id="search-btn">GO</button>
+  </div>
+
+  <div class="globe-hud">
+    <div class="hud-card">
+      <div class="hud-label">AQI US</div>
+      <div class="hud-value" id="hud-aqi" style="color:var(--aqi-good)">—</div>
+      <div class="hud-sub" id="hud-cat">—</div>
+    </div>
+    <div class="hud-card">
+      <div class="hud-label">Temp</div>
+      <div class="hud-value" id="hud-temp" style="color:var(--cyan)">—</div>
+      <div class="hud-sub">°C</div>
+    </div>
+    <div class="hud-card">
+      <div class="hud-label">PM2.5</div>
+      <div class="hud-value" id="hud-pm25" style="color:var(--amber)">—</div>
+      <div class="hud-sub">μg/m³</div>
+    </div>
+    <div class="hud-card">
+      <div class="hud-label">Condition</div>
+      <div class="hud-value" style="font-size:24px;" id="hud-icon">—</div>
+      <div class="hud-sub" id="hud-cond">—</div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Right Panel ─────────────────────────────────────────────────────── -->
+<div id="right-panel">
+
+  <!-- View: Overview -->
+  <div class="panel-view" id="view-overview">
+
+    <!-- Alerts -->
+    <div class="card">
+      <div class="card-title">Active Alerts</div>
+      <div id="alerts-list"><div class="loading-shimmer"></div></div>
+    </div>
+
+    <!-- Global Cities -->
+    <div class="card">
+      <div class="card-title">Global Monitor — Live AQI</div>
+      <div id="cities-list"><div class="loading-shimmer"></div></div>
+    </div>
+
+    <!-- Health Risk -->
+    <div class="card">
+      <div class="card-title">Health Risk by Group</div>
+      <div id="health-risk-list"><div class="loading-shimmer"></div></div>
+    </div>
+
+    <!-- Sources -->
+    <div class="card">
+      <div class="card-title">Pollution Sources</div>
+      <div id="sources-list"><div class="loading-shimmer"></div></div>
+    </div>
+
+  </div>
+
+  <!-- View: Forecast -->
+  <div class="panel-view hidden" id="view-forecast">
+    <div class="card">
+      <div class="card-title">7-Day Forecast</div>
+      <div class="forecast-scroll" id="forecast-days"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">AQI Forecast (72h)</div>
+      <canvas class="sparkline-canvas" id="aqi-sparkline"></canvas>
+    </div>
+    <div class="card">
+      <div class="card-title">Hourly Temperature</div>
+      <canvas class="sparkline-canvas" id="temp-sparkline"></canvas>
+    </div>
+    <div class="card">
+      <div class="card-title">Precipitation Probability (%)</div>
+      <canvas class="sparkline-canvas" id="rain-sparkline"></canvas>
+    </div>
+  </div>
+
+  <!-- View: Fires -->
+  <div class="panel-view hidden" id="view-fires">
+    <div class="card">
+      <div class="card-title">Active Fire Detections (NASA FIRMS)</div>
+      <div id="fire-list-panel"><div class="loading-shimmer"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Smoke / Aerosol</div>
+      <div id="smoke-panel"><div class="loading-shimmer"></div></div>
+    </div>
+  </div>
+
+  <!-- View: Analytics -->
+  <div class="panel-view hidden" id="view-analytics">
+    <div class="card">
+      <div class="card-title">AQI 7-Day Trend</div>
+      <canvas class="sparkline-canvas" id="trend-sparkline" style="height:70px;"></canvas>
+    </div>
+    <div class="card">
+      <div class="card-title">Weekly Stats</div>
+      <div id="trend-stats"><div class="loading-shimmer"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Pollutant Dominance</div>
+      <div id="pollutant-pie" style="height:100px; display:flex; align-items:center; justify-content:center;">
+        <div class="loading-shimmer" style="width:100%;"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Toast container -->
+<div class="toast-container" id="toast-container"></div>
+
+<script>
+// ─── CONFIG ─────────────────────────────────────────────────────────────────
+// Point to your Go gateway. If running locally: http://localhost:8080
+const API_BASE = window.ATMOS_API || 'http://localhost:8080/api/v1';
+const GEOCODE_URL = 'https://nominatim.openstreetmap.org';
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
+let state = {
+  lat: 28.6139, lon: 77.2090,  // Default: New Delhi
+  cityName: 'New Delhi',
+  weather: null, aqi: null, fires: [], alerts: [],
+  forecast: null, hourly: null, aqiForecast: null,
+  healthRisk: null, sources: null, smoke: null, trend: null,
+  locations: [],       // global monitored city snapshots
+  lastFetched: null,   // timestamp of last successful fetch
+  aqiEntities: [],
+  fireEntities: [],
+  cityEntities: [],    // globe markers for monitored cities
+};
+
+// ─── CESIUM GLOBE ────────────────────────────────────────────────────────────
+Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlYWE1OWUxNy1mMWZiLTQzYjYtYTQ0OS0zMGU5ODkzMzgwNDMiLCJpZCI6MjU5LCJpYXQiOjE2NjcyNDkzNjJ9.KgCe55bqPhFCx1-OtrMmJy28TDqBbVfD_YaT4bVlpVs';
+
+const viewer = new Cesium.Viewer('cesium-container', {
+  terrainProvider: Cesium.createWorldTerrain({ requestVertexNormals: true }),
+  imageryProvider: new Cesium.IonImageryProvider({ assetId: 3954 }), // Sentinel-2
+  animation: false,
+  baseLayerPicker: false,
+  fullscreenButton: false,
+  geocoder: false,
+  homeButton: false,
+  infoBox: false,
+  sceneModePicker: false,
+  selectionIndicator: false,
+  timeline: false,
+  navigationHelpButton: false,
+  scene3DOnly: true,
+});
+
+// Dark atmosphere
+viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#050810');
+viewer.scene.skyAtmosphere.hueShift    = -0.97;
+viewer.scene.skyAtmosphere.saturationShift = -0.95;
+viewer.scene.skyAtmosphere.brightnessShift = -0.7;
+viewer.scene.skyBox.show = false;
+viewer.scene.sun.show = false;
+viewer.scene.moon.show = false;
+
+// Fly to initial location
+flyTo(state.lat, state.lon, 2000000);
+
+function flyTo(lat, lon, height = 2000000) {
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
+    duration: 1.8,
+    orientation: { heading: 0, pitch: Cesium.Math.toRadians(-55), roll: 0 },
+  });
+}
+
+// Click on globe → fetch data for clicked point
+viewer.screenSpaceEventHandler.setInputAction(async (click) => {
+  const pos = viewer.scene.pickPosition(click.position);
+  if (!pos) return;
+  const carto = Cesium.Cartographic.fromCartesian(pos);
+  const lat = Cesium.Math.toDegrees(carto.latitude);
+  const lon = Cesium.Math.toDegrees(carto.longitude);
+  await setLocation(lat, lon);
+}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+// ─── LAYER TOGGLE STATE ──────────────────────────────────────────────────────
+let layers = { aqi: true, fire: false, wind: false };
+
+document.getElementById('btn-aqi-layer').addEventListener('click', function() {
+  layers.aqi = !layers.aqi;
+  this.classList.toggle('on', layers.aqi);
+  renderAQIHeatmap();
+});
+document.getElementById('btn-fire-layer').addEventListener('click', function() {
+  layers.fire = !layers.fire;
+  this.classList.toggle('on', layers.fire);
+  renderFireLayer();
+});
+document.getElementById('btn-wind-layer').addEventListener('click', function() {
+  layers.wind = !layers.wind;
+  this.classList.toggle('on', layers.wind);
+  // Wind vector rendering via compass only for now (full field requires canvas overlay)
+  toast('Wind direction shown in left panel compass', 'info');
+});
+
+// ─── AQI HEATMAP ON GLOBE ────────────────────────────────────────────────────
+async function renderAQIHeatmap() {
+  // Remove old
+  state.aqiEntities.forEach(e => viewer.entities.remove(e));
+  state.aqiEntities = [];
+
+  if (!layers.aqi) return;
+
+  try {
+    const r = await apiGet(`/aqi/heatmap?lat=${state.lat}&lon=${state.lon}&resolution=0.25&radius_deg=3`);
+    const cells = r.cells || [];
+    cells.forEach(cell => {
+      if (!cell.aqi) return;
+      const color = aqiToColor(cell.aqi);
+      const e = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(cell.lon, cell.lat, 0),
+        ellipse: {
+          semiMajorAxis: 15000,
+          semiMinorAxis: 15000,
+          material: Cesium.Color.fromCssColorString(color).withAlpha(0.28),
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        },
+      });
+      state.aqiEntities.push(e);
+    });
+  } catch(e) { /* heatmap optional */ }
+}
+
+// ─── FIRE LAYER ──────────────────────────────────────────────────────────────
+function renderFireLayer() {
+  state.fireEntities.forEach(e => viewer.entities.remove(e));
+  state.fireEntities = [];
+  if (!layers.fire) return;
+
+  (state.fires || []).forEach(fire => {
+    const e = viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(fire.lon, fire.lat, 0),
+      point: {
+        pixelSize: Math.max(6, Math.min(fire.frp / 10, 20)),
+        color: Cesium.Color.fromCssColorString('#ff6d00').withAlpha(0.9),
+        outlineColor: Cesium.Color.fromCssColorString('#ff1744').withAlpha(0.6),
+        outlineWidth: 2,
+        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+      },
+    });
+    state.fireEntities.push(e);
+  });
+}
+
+function aqiToColor(aqi) {
+  if (aqi <= 50)  return '#00e676';
+  if (aqi <= 100) return '#ffea00';
+  if (aqi <= 150) return '#ff9100';
+  if (aqi <= 200) return '#ff1744';
+  if (aqi <= 300) return '#d500f9';
+  return '#c62828';
+}
+
+// ─── NAVIGATION TABS ─────────────────────────────────────────────────────────
+document.querySelectorAll('.nav-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const view = tab.dataset.view;
+    document.querySelectorAll('.panel-view').forEach(v => v.classList.add('hidden'));
+    document.getElementById('view-' + view).classList.remove('hidden');
+    if (view === 'forecast') renderForecastView();
+    if (view === 'fires')    renderFiresView();
+    if (view === 'analytics') renderAnalyticsView();
+  });
+});
+
+// ─── SEARCH ──────────────────────────────────────────────────────────────────
+document.getElementById('search-btn').addEventListener('click', doSearch);
+document.getElementById('search-input').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+
+async function doSearch() {
+  const q = document.getElementById('search-input').value.trim();
+  if (!q) return;
+
+  // Check if it's lat,lon
+  const coords = q.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+  if (coords) {
+    await setLocation(parseFloat(coords[1]), parseFloat(coords[2]));
+    return;
+  }
+
+  try {
+    const resp = await fetch(`${GEOCODE_URL}/search?q=${encodeURIComponent(q)}&format=json&limit=1`);
+    const data = await resp.json();
+    if (!data.length) { toast('Location not found', 'error'); return; }
+    const { lat, lon, display_name } = data[0];
+    state.cityName = display_name.split(',')[0];
+    await setLocation(parseFloat(lat), parseFloat(lon));
+  } catch(e) {
+    toast('Geocoding failed', 'error');
+  }
+}
+
+// ─── SET LOCATION → FETCH ALL ────────────────────────────────────────────────
+async function setLocation(lat, lon) {
+  state.lat = lat;
+  state.lon = lon;
+  document.getElementById('hdr-coords').textContent = `${lat.toFixed(3)}, ${lon.toFixed(3)}`;
+  flyTo(lat, lon, 800000);
+
+  // Reverse geocode
+  try {
+    const r = await fetch(`${GEOCODE_URL}/reverse?lat=${lat}&lon=${lon}&format=json`);
+    const d = await r.json();
+    const city = d.address?.city || d.address?.town || d.address?.village || d.address?.county || '';
+    const country = d.address?.country_code?.toUpperCase() || '';
+    state.cityName = [city, country].filter(Boolean).join(', ') || `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+  } catch { state.cityName = `${lat.toFixed(2)}, ${lon.toFixed(2)}`; }
+
+  document.getElementById('hdr-city').textContent = state.cityName;
+  document.getElementById('search-input').value = '';
+
+  fetchAll();
+}
+
+// ─── FETCH ALL DATA ───────────────────────────────────────────────────────────
+async function fetchAll() {
+  const { lat, lon } = state;
+
+  await Promise.allSettled([
+    fetchWeather(lat, lon),
+    fetchAQI(lat, lon),
+    fetchAlerts(lat, lon),
+    fetchFires(lat, lon),
+    fetchForecast(lat, lon),
+    fetchHourly(lat, lon),
+    fetchAQIForecast(lat, lon),
+    fetchHealthRisk(lat, lon),
+    fetchSources(lat, lon),
+    fetchSmoke(lat, lon),
+    fetchTrend(lat, lon),
+    fetchLocations(),
+  ]);
+
+  state.lastFetched = new Date();
+  updateFreshnessindicator();
+  renderAQIHeatmap();
+  renderFireLayer();
+  renderCityMarkers();
+}
+
+// ─── API FETCHERS ─────────────────────────────────────────────────────────────
+async function apiGet(path) {
+  const resp = await fetch(API_BASE + path);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+async function fetchWeather(lat, lon) {
+  try {
+    state.weather = await apiGet(`/weather/current?lat=${lat}&lon=${lon}`);
+    renderWeather();
+  } catch(e) { toast('Weather data unavailable', 'error'); }
+}
+
+async function fetchAQI(lat, lon) {
+  try {
+    state.aqi = await apiGet(`/aqi/current?lat=${lat}&lon=${lon}`);
+    renderAQI();
+  } catch(e) { toast('AQI data unavailable', 'error'); }
+}
+
+async function fetchAlerts(lat, lon) {
+  try {
+    const r = await apiGet(`/alerts/active?lat=${lat}&lon=${lon}`);
+    state.alerts = r.alerts || [];
+    renderAlerts();
+  } catch { state.alerts = []; renderAlerts(); }
+}
+
+async function fetchFires(lat, lon) {
+  try {
+    const r = await apiGet(`/satellite/fires?lat=${lat}&lon=${lon}&radius=500`);
+    state.fires = r.fires || [];
+  } catch { state.fires = []; }
+}
+
+async function fetchForecast(lat, lon) {
+  try {
+    state.forecast = await apiGet(`/weather/forecast?lat=${lat}&lon=${lon}&days=7`);
+    renderForecastView();
+  } catch { state.forecast = null; }
+}
+
+async function fetchHourly(lat, lon) {
+  try {
+    state.hourly = await apiGet(`/weather/hourly?lat=${lat}&lon=${lon}&hours=48`);
+  } catch { state.hourly = null; }
+}
+
+async function fetchAQIForecast(lat, lon) {
+  try {
+    state.aqiForecast = await apiGet(`/aqi/forecast?lat=${lat}&lon=${lon}&hours=72`);
+  } catch { state.aqiForecast = null; }
+}
+
+async function fetchHealthRisk(lat, lon) {
+  try {
+    state.healthRisk = await apiGet(`/analytics/health-risk?lat=${lat}&lon=${lon}`);
+    renderHealthRisk();
+  } catch { state.healthRisk = null; }
+}
+
+async function fetchSources(lat, lon) {
+  try {
+    state.sources = await apiGet(`/analytics/pollution-sources?lat=${lat}&lon=${lon}`);
+    renderSources();
+  } catch { state.sources = null; }
+}
+
+async function fetchSmoke(lat, lon) {
+  try {
+    state.smoke = await apiGet(`/satellite/smoke?lat=${lat}&lon=${lon}`);
+  } catch { state.smoke = null; }
+}
+
+async function fetchTrend(lat, lon) {
+  try {
+    state.trend = await apiGet(`/analytics/aqi-trend?lat=${lat}&lon=${lon}&hours=168`);
+  } catch { state.trend = null; }
+}
+
+async function fetchLocations() {
+  try {
+    const r = await apiGet('/locations');
+    state.locations = r.locations || [];
+  } catch { state.locations = []; }
+}
+
+// ─── DATA FRESHNESS INDICATOR ────────────────────────────────────────────────
+function updateFreshnessindicator() {
+  if (!state.lastFetched) return;
+  const el = document.getElementById('hdr-time');
+  const t = state.lastFetched;
+  const hhmm = t.toUTCString().slice(17, 22);
+  el.textContent = `Updated ${hhmm} UTC`;
+  el.title = `Full refresh: ${t.toISOString()}`;
+}
+
+// ─── GLOBAL CITY MARKERS ─────────────────────────────────────────────────────
+function renderCityMarkers() {
+  state.cityEntities.forEach(e => viewer.entities.remove(e));
+  state.cityEntities = [];
+
+  (state.locations || []).forEach(loc => {
+    if (!loc.lat || !loc.lon) return;
+    const aqi   = loc.aqi_us || loc.aqi;
+    const color = aqi ? aqiToColor(aqi) : '#888888';
+    const city  = loc.city || '';
+
+    // Billboard label
+    const e = viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(loc.lon, loc.lat, 0),
+      point: {
+        pixelSize: 10,
+        color: Cesium.Color.fromCssColorString(color).withAlpha(0.9),
+        outlineColor: Cesium.Color.BLACK.withAlpha(0.5),
+        outlineWidth: 1,
+        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+      label: {
+        text: `${city}\n${aqi != null ? 'AQI ' + aqi : '—'}`,
+        font: '11px Space Mono',
+        fillColor: Cesium.Color.fromCssColorString(color),
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        pixelOffset: new Cesium.Cartesian2(0, -14),
+        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        translucencyByDistance: new Cesium.NearFarScalar(1e5, 1.0, 8e6, 0.0),
+      },
+    });
+    state.cityEntities.push(e);
+  });
+}
+
+// ─── RENDERERS ────────────────────────────────────────────────────────────────
+
+function renderAQI() {
+  const d = state.aqi;
+  if (!d) return;
+  const aqi  = d.aqi ?? '—';
+  const cat  = d.category || {};
+  const color = cat.color || '#888';
+
+  // Left panel
+  const numEl = document.getElementById('aqi-num');
+  numEl.textContent = aqi;
+  numEl.style.color = color;
+  document.getElementById('aqi-level').textContent  = cat.level || '—';
+  document.getElementById('aqi-level').style.color  = color;
+  document.getElementById('aqi-health').textContent = cat.health || '';
+
+  // Bar marker
+  const pct = Math.min((aqi / 500) * 100, 100);
+  document.getElementById('aqi-marker').style.left = pct + '%';
+
+  // HUD
+  document.getElementById('hud-aqi').textContent = aqi;
+  document.getElementById('hud-aqi').style.color = color;
+  document.getElementById('hud-cat').textContent = cat.level || '—';
+
+  // Pollutants
+  const p = d.pollutants || {};
+  const list = [
+    { name: 'PM2.5', key: 'pm2_5',            max: 250,  color: '#ff6d00' },
+    { name: 'PM10',  key: 'pm10',             max: 500,  color: '#ff9100' },
+    { name: 'NO2',   key: 'nitrogen_dioxide', max: 200,  color: '#7c4dff' },
+    { name: 'O3',    key: 'ozone',            max: 200,  color: '#00b0ff' },
+    { name: 'SO2',   key: 'sulphur_dioxide',  max: 150,  color: '#69f0ae' },
+    { name: 'CO',    key: 'carbon_monoxide',  max: 10000,color: '#ffea00' },
+  ];
+
+  let html = '';
+  list.forEach(item => {
+    const entry = p[item.key];
+    const val   = entry?.value;
+    const unit  = entry?.unit || 'μg/m³';
+    const fill  = val != null ? Math.min((val / item.max) * 100, 100) : 0;
+    html += `
+      <div class="pollutant-row">
+        <span class="pollutant-name">${item.name}</span>
+        <div class="pollutant-bar-track">
+          <div class="pollutant-bar-fill" style="width:${fill}%;background:${item.color}"></div>
+        </div>
+        <span class="pollutant-value">${val != null ? val.toFixed(1) : '—'}</span>
+      </div>`;
+  });
+
+  // HUD PM2.5
+  const pm25 = (p.pm2_5 || {}).value;
+  document.getElementById('hud-pm25').textContent = pm25 != null ? pm25.toFixed(0) : '—';
+
+  document.getElementById('pollutant-list').innerHTML = html;
+}
+
+function renderWeather() {
+  const d = state.weather;
+  if (!d) return;
+
+  // Temp
+  document.getElementById('wx-temp').textContent     = d.temperature?.celsius?.toFixed(1) ?? '—';
+  document.getElementById('wx-feels').textContent    = d.temperature?.feels_like?.toFixed(1) ?? '—';
+  document.getElementById('wx-humid').textContent    = d.humidity ?? '—';
+  document.getElementById('wx-pressure').textContent = d.pressure?.toFixed(0) ?? '—';
+  document.getElementById('wx-uv').textContent       = d.uv_index?.toFixed(1) ?? '—';
+  const vis = d.visibility_m;
+  document.getElementById('wx-vis').textContent      = vis != null ? (vis/1000).toFixed(1) : '—';
+
+  // Wind
+  const w = d.wind || {};
+  document.getElementById('wind-speed').textContent = w.speed_kmh?.toFixed(0) ?? '—';
+  document.getElementById('wind-gust').textContent  = w.gusts_kmh?.toFixed(0) ?? '—';
+  document.getElementById('wind-dir').textContent   = `${w.cardinal || '—'} (${w.direction_deg?.toFixed(0) ?? '—'}°)`;
+  const rotDeg = (w.direction_deg || 0) + 180; // arrow points TO wind direction
+  document.getElementById('wind-arrow').style.transform =
+    `translate(-50%, -100%) rotate(${rotDeg}deg)`;
+
+  // HUD
+  document.getElementById('hud-temp').textContent = d.temperature?.celsius?.toFixed(0) ?? '—';
+  document.getElementById('hud-icon').textContent = d.condition?.icon ?? '—';
+  document.getElementById('hud-cond').textContent = d.condition?.label ?? '—';
+}
+
+function renderAlerts() {
+  const list = state.alerts;
+  if (!list || !list.length) {
+    document.getElementById('alerts-list').innerHTML =
+      '<div class="section-empty">✓ No active alerts</div>';
+  } else {
+    let html = '';
+    list.forEach(a => {
+      html += `<div class="alert-item ${a.severity}">
+        <div class="alert-title">${a.title}</div>
+        <div class="alert-message">${a.message}</div>
+      </div>`;
+    });
+    document.getElementById('alerts-list').innerHTML = html;
+  }
+  renderCities();
+}
+
+function renderCities() {
+  const locs = state.locations;
+  if (!locs || !locs.length) {
+    document.getElementById('cities-list').innerHTML =
+      '<div class="section-empty">Fetching global data…</div>';
+    return;
+  }
+
+  const sorted = [...locs]
+    .filter(l => l.aqi_us != null || l.aqi != null)
+    .sort((a, b) => (b.aqi_us || b.aqi || 0) - (a.aqi_us || a.aqi || 0));
+
+  let html = '';
+  sorted.slice(0, 12).forEach(loc => {
+    const aqi   = loc.aqi_us || loc.aqi;
+    const color = aqi ? aqiToColor(aqi) : '#888';
+    const cat   = loc.aqi_category || '—';
+    const pct   = aqi ? Math.min((aqi / 500) * 100, 100) : 0;
+    html += `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer;"
+           onclick="setLocation(${loc.lat},${loc.lon})">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            ${loc.city || '—'} <span style="color:var(--text-faint);font-weight:400;">${loc.country || ''}</span>
+          </div>
+          <div style="height:2px;background:var(--surface-hi);border-radius:1px;margin-top:3px;">
+            <div style="height:100%;width:${pct}%;background:${color};border-radius:1px;"></div>
+          </div>
+        </div>
+        <div style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:${color};
+                    min-width:32px;text-align:right;">${aqi ?? '—'}</div>
+      </div>`;
+  });
+
+  document.getElementById('cities-list').innerHTML = html ||
+    '<div class="section-empty">No AQI data available</div>';
+}
+
+function renderHealthRisk() {
+  const d = state.healthRisk;
+  if (!d) return;
+  const risks = d.risks || {};
+
+  const badge = (level) => {
+    const cls = { good:'risk-good', moderate:'risk-moderate', unhealthy_sg:'risk-high',
+                  unhealthy:'risk-high', very_unhealthy:'risk-extreme', hazardous:'risk-extreme' };
+    return `<span class="risk-badge ${cls[level] || 'risk-moderate'}">${level?.replace('_',' ') || '?'}</span>`;
+  };
+
+  let html = '';
+  Object.entries(risks).forEach(([key, r]) => {
+    html += `<div class="risk-row">
+      <span class="risk-group">${r.group}</span>
+      ${badge(r.risk_level)}
+    </div>`;
+  });
+
+  if (d.exceedances?.length) {
+    html += `<div style="margin-top:8px;font-size:9px;color:var(--red);font-family:var(--font-mono);">`;
+    d.exceedances.forEach(e => { html += `<div>⚠ ${e}</div>`; });
+    html += '</div>';
+  }
+
+  document.getElementById('health-risk-list').innerHTML = html;
+}
+
+function renderSources() {
+  const d = state.sources;
+  if (!d || !d.sources?.length) {
+    document.getElementById('sources-list').innerHTML =
+      '<div class="section-empty">Insufficient data</div>';
+    return;
+  }
+
+  let html = '';
+  d.sources.slice(0, 4).forEach(s => {
+    const w = s.confidence;
+    html += `<div style="margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+        <span style="font-size:10px;color:var(--text)">${s.label}</span>
+        <span style="font-family:var(--font-mono);font-size:10px;color:var(--cyan)">${w}%</span>
+      </div>
+      <div style="height:3px;background:var(--surface-hi);border-radius:2px;">
+        <div style="height:100%;width:${w}%;background:var(--cyan);border-radius:2px;"></div>
+      </div>
+      <div style="font-size:9px;color:var(--text-faint);margin-top:2px;">${s.indicators.join(' · ')}</div>
+    </div>`;
+  });
+  document.getElementById('sources-list').innerHTML = html;
+}
+
+function renderForecastView() {
+  if (!state.forecast) return;
+
+  const days = state.forecast.days || [];
+  const daysHtml = days.map(d => {
+    const name = new Date(d.date).toLocaleDateString('en', {weekday:'short'});
+    const rain = d.precipitation?.probability_pct ?? 0;
+    return `<div class="forecast-day">
+      <div class="forecast-day-name">${name}</div>
+      <div class="forecast-day-icon">${d.condition?.icon || '—'}</div>
+      <div class="forecast-day-hi">${d.temperature?.max?.toFixed(0) ?? '—'}°</div>
+      <div class="forecast-day-lo">${d.temperature?.min?.toFixed(0) ?? '—'}°</div>
+      <div class="forecast-day-rain">${rain?.toFixed(0) ?? 0}%</div>
+    </div>`;
+  }).join('');
+  document.getElementById('forecast-days').innerHTML = daysHtml;
+
+  // Sparklines
+  if (state.aqiForecast) drawSparkline('aqi-sparkline', state.aqiForecast.series.map(s=>s.aqi_us), '#ff9100', 'AQI');
+  if (state.hourly) {
+    drawSparkline('temp-sparkline', state.hourly.series.map(s=>s.temperature), '#00d4ff', '°C');
+    drawSparkline('rain-sparkline', state.hourly.series.map(s=>s.precip_prob), '#29b6f6', '%');
+  }
+}
+
+function renderFiresView() {
+  // Fires list
+  const fires = state.fires || [];
+  if (!fires.length) {
+    const note = `<div class="section-empty">No active fires detected in range.<br><br>
+      <span style="font-size:9px;color:var(--text-faint);">Set NASA_FIRMS_KEY in .env for real fire data.<br>
+      Get a free key at firms.modaps.eosdis.nasa.gov</span></div>`;
+    document.getElementById('fire-list-panel').innerHTML = note;
+  } else {
+    let html = '';
+    fires.slice(0, 20).forEach(f => {
+      html += `<div class="fire-item">
+        <span class="fire-icon">🔥</span>
+        <div>
+          <div style="font-size:10px;font-weight:600;">${f.confidence.toUpperCase()} confidence</div>
+          <div class="fire-coords">${f.lat.toFixed(3)}, ${f.lon.toFixed(3)} · ${f.date}</div>
+        </div>
+        <span class="fire-frp">${f.frp.toFixed(0)} MW</span>
+      </div>`;
+    });
+    if (fires.length > 20) html += `<div class="section-empty">+${fires.length-20} more</div>`;
+    document.getElementById('fire-list-panel').innerHTML = html;
+    renderFireLayer();
+  }
+
+  // Smoke
+  const smoke = state.smoke;
+  if (smoke?.current) {
+    const cur = smoke.current;
+    document.getElementById('smoke-panel').innerHTML = `
+      <div class="stat-grid">
+        <div class="stat-item">
+          <div class="stat-label">Smoke Level</div>
+          <div class="stat-value" style="color:var(--amber)">${cur.smoke_level?.toUpperCase() || '—'}</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">AOD</div>
+          <div class="stat-value">${cur.aerosol_optical_depth?.toFixed(3) ?? '—'}</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Dust</div>
+          <div class="stat-value"><span>${cur.dust_ug_m3?.toFixed(1) ?? '—'}</span><span class="stat-unit"> μg/m³</span></div>
+        </div>
+      </div>`;
+  }
+}
+
+function renderAnalyticsView() {
+  if (state.trend) {
+    const vals = state.trend.series.map(s => s.aqi);
+    const times = state.trend.series.map(s => s.time?.slice(5, 10));
+    drawSparkline('trend-sparkline', vals, '#00d4ff', 'AQI', times);
+
+    const stats = state.trend.stats || {};
+    document.getElementById('trend-stats').innerHTML = `
+      <div class="stat-grid">
+        <div class="stat-item"><div class="stat-label">7d Mean</div>
+          <div class="stat-value">${stats.mean ?? '—'}</div></div>
+        <div class="stat-item"><div class="stat-label">7d Max</div>
+          <div class="stat-value" style="color:var(--red)">${stats.max ?? '—'}</div></div>
+        <div class="stat-item"><div class="stat-label">7d Min</div>
+          <div class="stat-value" style="color:var(--green)">${stats.min ?? '—'}</div></div>
+        <div class="stat-item"><div class="stat-label">Latest</div>
+          <div class="stat-value">${stats.latest ?? '—'}</div></div>
+      </div>`;
+  }
+
+  // Pollutant dominance (simple bar chart)
+  if (state.aqi?.pollutants) {
+    const p = state.aqi.pollutants;
+    const items = [
+      { n: 'PM2.5', v: (p.pm2_5?.value || 0), max: 250,  c: '#ff6d00' },
+      { n: 'PM10',  v: (p.pm10?.value || 0),  max: 500,  c: '#ff9100' },
+      { n: 'NO2',   v: (p.nitrogen_dioxide?.value || 0), max: 200, c: '#7c4dff' },
+      { n: 'O3',    v: (p.ozone?.value || 0), max: 200, c: '#00b0ff' },
+      { n: 'SO2',   v: (p.sulphur_dioxide?.value || 0), max: 150, c: '#69f0ae' },
+    ].filter(i => i.v > 0);
+
+    const total = items.reduce((s, i) => s + i.v, 0) || 1;
+    let html = `<div style="display:flex;height:80px;align-items:flex-end;gap:6px;padding:0 4px;">`;
+    items.forEach(item => {
+      const h = Math.max(4, (item.v / total) * 70);
+      html += `<div style="display:flex;flex-direction:column;align-items:center;flex:1;">
+        <div style="font-size:8px;color:var(--text-dim);margin-bottom:2px;">${item.v.toFixed(0)}</div>
+        <div style="width:100%;height:${h}px;background:${item.c};border-radius:2px 2px 0 0;"></div>
+        <div style="font-size:8px;color:var(--text-faint);margin-top:2px;">${item.n}</div>
+      </div>`;
+    });
+    html += '</div>';
+    document.getElementById('pollutant-pie').innerHTML = html;
+  }
+}
+
+// ─── SPARKLINE RENDERER (Canvas) ─────────────────────────────────────────────
+function drawSparkline(canvasId, data, color, label, xLabels) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = (canvas.style.height ? parseInt(canvas.style.height) : 52) * dpr;
+  ctx.scale(dpr, dpr);
+
+  const W = canvas.width / dpr;
+  const H = canvas.height / dpr;
+  const pad = { top: 6, bottom: 14, left: 4, right: 4 };
+  const vals = data.filter(v => v != null);
+  if (!vals.length) return;
+
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const range = max - min || 1;
+
+  const sx = (i) => pad.left + (i / (data.length - 1)) * (W - pad.left - pad.right);
+  const sy = (v) => pad.top + (1 - (v - min) / range) * (H - pad.top - pad.bottom);
+
+  // Fill
+  ctx.beginPath();
+  data.forEach((v, i) => {
+    if (v == null) return;
+    i === 0 || data.slice(0, i).every(x => x == null)
+      ? ctx.moveTo(sx(i), sy(v))
+      : ctx.lineTo(sx(i), sy(v));
+  });
+  ctx.lineTo(sx(data.length - 1), H - pad.bottom);
+  ctx.lineTo(sx(0), H - pad.bottom);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, color + '55');
+  grad.addColorStop(1, color + '00');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  let first = true;
+  data.forEach((v, i) => {
+    if (v == null) return;
+    first ? ctx.moveTo(sx(i), sy(v)) : ctx.lineTo(sx(i), sy(v));
+    first = false;
+  });
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Min/max labels
+  ctx.fillStyle = 'rgba(232,236,244,0.35)';
+  ctx.font = `9px 'Space Mono', monospace`;
+  ctx.fillText(max.toFixed(0), pad.left, pad.top + 8);
+  ctx.fillText(min.toFixed(0), pad.left, H - pad.bottom - 2);
+}
+
+// ─── CLOCK ───────────────────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  document.getElementById('hdr-time').textContent =
+    now.toUTCString().slice(17, 25) + ' UTC';
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ─── TOAST ───────────────────────────────────────────────────────────────────
+function toast(msg, type = 'info') {
+  const c = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  c.appendChild(el);
+  setTimeout(() => el.remove(), 5000);
+}
+
+// ─── HEADER LOCATION INIT ────────────────────────────────────────────────────
+document.getElementById('hdr-city').textContent   = state.cityName;
+document.getElementById('hdr-coords').textContent = `${state.lat}, ${state.lon}`;
+
+// ─── AUTO-DETECT LOCATION ────────────────────────────────────────────────────
+if (navigator.geolocation) {
+  navigator.geolocation.getCurrentPosition(
+    async pos => {
+      await setLocation(pos.coords.latitude, pos.coords.longitude);
+    },
+    () => {
+      // Permission denied — use default New Delhi and fetch
+      fetchAll();
+    }
+  );
+} else {
+  fetchAll();
+}
+
+// ─── AUTO-REFRESH every 5 minutes ────────────────────────────────────────────
+setInterval(fetchAll, 5 * 60 * 1000);
+</script>
+</body>
+</html>
