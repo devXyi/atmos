@@ -245,3 +245,60 @@ async def analytics_pollution_sources(
     weather = await weather_adapter.get_current(lat, lon)
     aqi = await aqi_adapter.get_current(lat, lon)
     return health_analyzer.estimate_sources(weather, aqi)
+
+
+# ─── Monitored Locations ──────────────────────────────────────────────────────
+
+@app.get("/locations")
+async def monitored_locations():
+    """
+    Returns all monitored locations with their latest snapshot from DB.
+    Falls back to the seeded list with live AQI fetch if DB is unavailable.
+    """
+    db_url = os.getenv("DATABASE_URL")
+
+    if db_url:
+        try:
+            import db.database as database
+            rows = await database.get_latest_all_locations()
+            return {"locations": rows, "source": "timescaledb", "count": len(rows)}
+        except Exception as e:
+            log.warning(f"/locations DB query failed: {e}, falling back to live fetch")
+
+    # Fallback: seed list + live AQI fetch (no DB)
+    seed = [
+        {"lat": 28.6139,  "lon": 77.2090,  "city": "New Delhi",   "country": "IN"},
+        {"lat": 19.0760,  "lon": 72.8777,  "city": "Mumbai",      "country": "IN"},
+        {"lat": 39.9042,  "lon": 116.4074, "city": "Beijing",     "country": "CN"},
+        {"lat": 40.7128,  "lon": -74.0060, "city": "New York",    "country": "US"},
+        {"lat": 34.0522,  "lon":-118.2437, "city": "Los Angeles", "country": "US"},
+        {"lat": 51.5074,  "lon": -0.1278,  "city": "London",      "country": "GB"},
+        {"lat": 48.8566,  "lon":  2.3522,  "city": "Paris",       "country": "FR"},
+        {"lat": 35.6762,  "lon": 139.6503, "city": "Tokyo",       "country": "JP"},
+        {"lat": 31.2304,  "lon": 121.4737, "city": "Shanghai",    "country": "CN"},
+        {"lat": -23.5505, "lon": -46.6333, "city": "São Paulo",   "country": "BR"},
+        {"lat": 30.0444,  "lon":  31.2357, "city": "Cairo",       "country": "EG"},
+        {"lat": 6.5244,   "lon":   3.3792, "city": "Lagos",       "country": "NG"},
+        {"lat": 55.7558,  "lon":  37.6173, "city": "Moscow",      "country": "RU"},
+        {"lat": 1.3521,   "lon": 103.8198, "city": "Singapore",   "country": "SG"},
+        {"lat": -33.8688, "lon": 151.2093, "city": "Sydney",      "country": "AU"},
+    ]
+
+    async def _fetch_aqi(loc):
+        try:
+            key = f"aqi:current:{loc['lat']:.3f}:{loc['lon']:.3f}"
+            cached = await cache.get(key)
+            if cached:
+                aqi_val = cached.get("aqi")
+                cat = cached.get("category", {})
+            else:
+                data = await aqi_adapter.get_current(loc["lat"], loc["lon"])
+                aqi_val = data.get("aqi")
+                cat = data.get("category", {})
+            return {**loc, "aqi_us": aqi_val, "aqi_category": (cat or {}).get("level", "unknown"),
+                    "color": (cat or {}).get("color", "#888")}
+        except Exception:
+            return {**loc, "aqi_us": None, "aqi_category": "unknown", "color": "#888"}
+
+    results = await asyncio.gather(*[_fetch_aqi(loc) for loc in seed])
+    return {"locations": list(results), "source": "live", "count": len(results)}
