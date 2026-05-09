@@ -1,13 +1,14 @@
 """
 Prexus Atmos — Data Engine
-Real data from: Open-Meteo (weather + AQ), WAQI/AQICN, OpenAQ, NASA FIRMS
+Real data from: Open-Meteo (weather + AQ), WAQI/AQICN, NASA FIRMS
 """
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import logging
+import os
 
 from adapters.open_meteo import OpenMeteoAdapter
 from adapters.aqi import AQIAdapter
@@ -31,7 +32,23 @@ alert_engine = AlertEngine()
 async def lifespan(app: FastAPI):
     log.info("Prexus Atmos Data Engine starting...")
     await cache.connect()
+
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        import db.database as database
+        await database.connect()
+        from ingestion.worker import run_continuous
+        interval = int(os.getenv("INGEST_INTERVAL_SEC", "300"))
+        asyncio.create_task(run_continuous(interval))
+        log.info(f"Ingestion worker started (interval: {interval}s)")
+    else:
+        log.info("DATABASE_URL not set — running without TimescaleDB / ingestion worker")
+
     yield
+
+    if db_url:
+        import db.database as database
+        await database.close()
     await cache.close()
     log.info("Data Engine shut down.")
 
@@ -61,7 +78,7 @@ async def weather_current(
     if cached := await cache.get(key):
         return cached
     data = await weather_adapter.get_current(lat, lon)
-    await cache.set(key, data, ttl=300)  # 5 min
+    await cache.set(key, data, ttl=300)
     return data
 
 
@@ -75,7 +92,7 @@ async def weather_forecast(
     if cached := await cache.get(key):
         return cached
     data = await weather_adapter.get_forecast(lat, lon, days)
-    await cache.set(key, data, ttl=1800)  # 30 min
+    await cache.set(key, data, ttl=1800)
     return data
 
 
@@ -104,7 +121,7 @@ async def aqi_current(
     if cached := await cache.get(key):
         return cached
     data = await aqi_adapter.get_current(lat, lon)
-    await cache.set(key, data, ttl=600)  # 10 min
+    await cache.set(key, data, ttl=600)
     return data
 
 
@@ -128,8 +145,7 @@ async def aqi_stations(
     lon: float = Query(77.2090),
     radius: int = Query(25000, ge=1000, le=100000),
 ):
-    data = await aqi_adapter.get_nearby_stations(lat, lon, radius)
-    return data
+    return await aqi_adapter.get_nearby_stations(lat, lon, radius)
 
 
 @app.get("/aqi/heatmap")
@@ -139,10 +155,6 @@ async def aqi_heatmap(
     resolution: float = Query(0.25, ge=0.1, le=1.0),
     radius_deg: float = Query(2.0, ge=0.5, le=10.0),
 ):
-    """
-    Returns a grid of AQI forecast values for heatmap rendering.
-    Uses Open-Meteo air quality model — covers every 0.25° grid cell globally.
-    """
     key = f"aqi:heatmap:{lat:.2f}:{lon:.2f}:{resolution}:{radius_deg}"
     if cached := await cache.get(key):
         return cached
@@ -157,7 +169,7 @@ async def aqi_heatmap(
 async def satellite_fires(
     lat: float = Query(28.6139),
     lon: float = Query(77.2090),
-    radius: int = Query(500, ge=50, le=2000),  # km
+    radius: int = Query(500, ge=50, le=2000),
 ):
     key = f"satellite:fires:{lat:.2f}:{lon:.2f}:{radius}"
     if cached := await cache.get(key):
@@ -172,8 +184,7 @@ async def satellite_smoke(
     lat: float = Query(28.6139),
     lon: float = Query(77.2090),
 ):
-    data = await satellite_adapter.get_smoke_data(lat, lon)
-    return data
+    return await satellite_adapter.get_smoke_data(lat, lon)
 
 
 # ─── Alerts ───────────────────────────────────────────────────────────────────
@@ -183,9 +194,8 @@ async def alerts_active(
     lat: float = Query(28.6139),
     lon: float = Query(77.2090),
 ):
-    """Derives alerts from current AQI + weather data — no third-party alert API needed."""
-    weather_task = aio_task(weather_adapter.get_current(lat, lon))
-    aqi_task = aio_task(aqi_adapter.get_current(lat, lon))
+    weather_task = asyncio.ensure_future(weather_adapter.get_current(lat, lon))
+    aqi_task = asyncio.ensure_future(aqi_adapter.get_current(lat, lon))
     weather, aqi = await asyncio.gather(weather_task, aqi_task)
     alerts = alert_engine.evaluate(weather, aqi)
     return {"alerts": alerts, "count": len(alerts)}
@@ -197,7 +207,6 @@ async def alerts_history(
     lon: float = Query(77.2090),
     days: int = Query(7, ge=1, le=30),
 ):
-    # Historical AQI trend used to reconstruct past alert events
     trend = await trend_analyzer.get_hourly_trend(lat, lon, hours=days * 24)
     past_alerts = alert_engine.reconstruct_from_trend(trend)
     return {"alerts": past_alerts, "days": days}
@@ -233,13 +242,6 @@ async def analytics_pollution_sources(
     lat: float = Query(28.6139),
     lon: float = Query(77.2090),
 ):
-    """Cross-references wind direction + pollutant ratios to estimate sources."""
     weather = await weather_adapter.get_current(lat, lon)
     aqi = await aqi_adapter.get_current(lat, lon)
     return health_analyzer.estimate_sources(weather, aqi)
-
-
-# ─── Helpers ──────────────────────────────────────────────────────────────────
-
-def aio_task(coro):
-    return asyncio.ensure_future(coro)
