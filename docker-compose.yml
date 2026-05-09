@@ -2,6 +2,25 @@ version: "3.9"
 
 services:
 
+  # ── TimescaleDB (PostgreSQL + TimescaleDB + PostGIS) ──────────────────────
+  timescaledb:
+    image: timescale/timescaledb-ha:pg16-latest
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     atmos
+      POSTGRES_PASSWORD: atmos
+      POSTGRES_DB:       atmos
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atmos -d atmos"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   # ── Redis (optional cache) ─────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
@@ -25,10 +44,14 @@ services:
       - "8000:8000"
     environment:
       - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://atmos:atmos@timescaledb:5432/atmos
       - WAQI_TOKEN=${WAQI_TOKEN}
       - NASA_FIRMS_KEY=${NASA_FIRMS_KEY}
+      - INGEST_INTERVAL_SEC=${INGEST_INTERVAL_SEC:-300}
     depends_on:
       redis:
+        condition: service_healthy
+      timescaledb:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
@@ -63,3 +86,6 @@ services:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - gateway
+
+volumes:
+  timescaledb_data:
