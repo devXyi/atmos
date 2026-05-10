@@ -822,8 +822,12 @@ header {
 
 <script>
 // ─── CONFIG ─────────────────────────────────────────────────────────────────
-// Point to your Go gateway. If running locally: http://localhost:8080
-const API_BASE = window.ATMOS_API || 'http://localhost:8080/api/v1';
+// Point to your Go gateway. Override via window.ATMOS_API when needed.
+const DEFAULT_API_BASE = window.location.protocol === 'file:'
+  ? 'http://localhost:8080/api/v1'
+  : `${window.location.origin}/api/v1`;
+const API_BASE = window.ATMOS_API || DEFAULT_API_BASE;
+const API_TIMEOUT_MS = 12000;
 const GEOCODE_URL = 'https://nominatim.openstreetmap.org';
 
 // ─── STATE ───────────────────────────────────────────────────────────────────
@@ -1058,23 +1062,68 @@ async function fetchAll() {
 
 // ─── API FETCHERS ─────────────────────────────────────────────────────────────
 async function apiGet(path) {
-  const resp = await fetch(API_BASE + path);
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  return resp.json();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    const resp = await fetch(API_BASE + path, { signal: controller.signal });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return resp.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function renderAQIUnavailable() {
+  document.getElementById('aqi-num').textContent = '—';
+  document.getElementById('aqi-num').style.color = '#888';
+  document.getElementById('aqi-level').textContent = 'Data unavailable';
+  document.getElementById('aqi-level').style.color = '#888';
+  document.getElementById('aqi-health').textContent = '';
+  document.getElementById('aqi-marker').style.left = '0%';
+  document.getElementById('hud-aqi').textContent = '—';
+  document.getElementById('hud-aqi').style.color = '#888';
+  document.getElementById('hud-cat').textContent = '—';
+  document.getElementById('hud-pm25').textContent = '—';
+  document.getElementById('pollutant-list').innerHTML =
+    '<div class="section-empty">AQI data unavailable</div>';
+}
+
+function renderWeatherUnavailable() {
+  document.getElementById('wx-temp').textContent = '—';
+  document.getElementById('wx-feels').textContent = '—';
+  document.getElementById('wx-humid').textContent = '—';
+  document.getElementById('wx-pressure').textContent = '—';
+  document.getElementById('wx-uv').textContent = '—';
+  document.getElementById('wx-vis').textContent = '—';
+  document.getElementById('wind-speed').textContent = '—';
+  document.getElementById('wind-gust').textContent = '—';
+  document.getElementById('wind-dir').textContent = '—';
+  document.getElementById('wind-arrow').style.transform = 'translate(-50%, -100%) rotate(180deg)';
+  document.getElementById('hud-temp').textContent = '—';
+  document.getElementById('hud-icon').textContent = '—';
+  document.getElementById('hud-cond').textContent = '—';
 }
 
 async function fetchWeather(lat, lon) {
   try {
     state.weather = await apiGet(`/weather/current?lat=${lat}&lon=${lon}`);
     renderWeather();
-  } catch(e) { toast('Weather data unavailable', 'error'); }
+  } catch(e) {
+    state.weather = null;
+    renderWeatherUnavailable();
+    toast('Weather data unavailable', 'error');
+  }
 }
 
 async function fetchAQI(lat, lon) {
   try {
     state.aqi = await apiGet(`/aqi/current?lat=${lat}&lon=${lon}`);
     renderAQI();
-  } catch(e) { toast('AQI data unavailable', 'error'); }
+  } catch(e) {
+    state.aqi = null;
+    renderAQIUnavailable();
+    toast('AQI data unavailable', 'error');
+  }
 }
 
 async function fetchAlerts(lat, lon) {
@@ -1115,26 +1164,38 @@ async function fetchHealthRisk(lat, lon) {
   try {
     state.healthRisk = await apiGet(`/analytics/health-risk?lat=${lat}&lon=${lon}`);
     renderHealthRisk();
-  } catch { state.healthRisk = null; }
+  } catch {
+    state.healthRisk = null;
+    renderHealthRisk();
+  }
 }
 
 async function fetchSources(lat, lon) {
   try {
     state.sources = await apiGet(`/analytics/pollution-sources?lat=${lat}&lon=${lon}`);
     renderSources();
-  } catch { state.sources = null; }
+  } catch {
+    state.sources = null;
+    renderSources();
+  }
 }
 
 async function fetchSmoke(lat, lon) {
   try {
     state.smoke = await apiGet(`/satellite/smoke?lat=${lat}&lon=${lon}`);
-  } catch { state.smoke = null; }
+  } catch {
+    state.smoke = null;
+  }
+  renderFiresView();
 }
 
 async function fetchTrend(lat, lon) {
   try {
     state.trend = await apiGet(`/analytics/aqi-trend?lat=${lat}&lon=${lon}&hours=168`);
-  } catch { state.trend = null; }
+  } catch {
+    state.trend = null;
+  }
+  renderAnalyticsView();
 }
 
 async function fetchLocations() {
@@ -1340,7 +1401,11 @@ function renderCities() {
 
 function renderHealthRisk() {
   const d = state.healthRisk;
-  if (!d) return;
+  if (!d) {
+    document.getElementById('health-risk-list').innerHTML =
+      '<div class="section-empty">Health risk data unavailable</div>';
+    return;
+  }
   const risks = d.risks || {};
 
   const badge = (level) => {
@@ -1460,6 +1525,9 @@ function renderFiresView() {
           <div class="stat-value"><span>${cur.dust_ug_m3?.toFixed(1) ?? '—'}</span><span class="stat-unit"> μg/m³</span></div>
         </div>
       </div>`;
+  } else {
+    document.getElementById('smoke-panel').innerHTML =
+      '<div class="section-empty">Smoke data unavailable</div>';
   }
 }
 
@@ -1481,6 +1549,9 @@ function renderAnalyticsView() {
         <div class="stat-item"><div class="stat-label">Latest</div>
           <div class="stat-value">${stats.latest ?? '—'}</div></div>
       </div>`;
+  } else {
+    document.getElementById('trend-stats').innerHTML =
+      '<div class="section-empty">Trend data unavailable</div>';
   }
 
   // Pollutant dominance (simple bar chart)
@@ -1506,6 +1577,9 @@ function renderAnalyticsView() {
     });
     html += '</div>';
     document.getElementById('pollutant-pie').innerHTML = html;
+  } else {
+    document.getElementById('pollutant-pie').innerHTML =
+      '<div class="section-empty">Pollutant data unavailable</div>';
   }
 }
 
