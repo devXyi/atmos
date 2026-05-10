@@ -1186,7 +1186,7 @@ async function fetchSmoke(lat, lon) {
   } catch {
     state.smoke = null;
   }
-  renderFiresView();
+  try { renderFiresView(); } catch {}
 }
 
 async function fetchTrend(lat, lon) {
@@ -1195,7 +1195,7 @@ async function fetchTrend(lat, lon) {
   } catch {
     state.trend = null;
   }
-  renderAnalyticsView();
+  try { renderAnalyticsView(); } catch {}
 }
 
 async function fetchLocations() {
