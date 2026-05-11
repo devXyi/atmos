@@ -822,13 +822,181 @@ header {
 
 <script>
 // ─── CONFIG ─────────────────────────────────────────────────────────────────
-// Point to your Go gateway. Override via window.ATMOS_API when needed.
+// Point to your Go gateway. Override via ?api=... (persisted), localStorage.ATMOS_API, or window.ATMOS_API.
+const query = new URLSearchParams(window.location.search);
+const queryApiRaw = query.get('api');
+
+function normalizeApiBase(apiBase) {
+  if (!apiBase) return null;
+  try {
+    const u = new URL(apiBase);
+    if (!['http:', 'https:'].includes(u.protocol)) return null;
+    return u.toString().replace(/\/+$/, '');
+  } catch (_) {
+    return null;
+  }
+}
+
+const queryApiBase = normalizeApiBase(queryApiRaw);
+let storedApiBase = null;
+try {
+  if (queryApiBase) window.localStorage.setItem('ATMOS_API', queryApiBase);
+  storedApiBase = normalizeApiBase(window.localStorage.getItem('ATMOS_API'));
+} catch (_) { /* storage may be unavailable */ }
+
 const DEFAULT_API_BASE = window.location.protocol === 'file:'
   ? 'http://localhost:8080/api/v1'
   : `${window.location.origin}/api/v1`;
-const API_BASE = window.ATMOS_API || DEFAULT_API_BASE;
+const API_BASE = normalizeApiBase(queryApiBase || storedApiBase || window.ATMOS_API) || DEFAULT_API_BASE;
 const API_TIMEOUT_MS = 12000; // 12s hard timeout for unreachable static deployments
 const GEOCODE_URL = 'https://nominatim.openstreetmap.org';
+const IS_GITHUB_PAGES = window.location.hostname.endsWith('github.io');
+const STATIC_DEMO_MODE = IS_GITHUB_PAGES && !(queryApiBase || storedApiBase || window.ATMOS_API);
+let shownStaticDemoToast = false;
+
+function getDemoCoords(path) {
+  const q = new URLSearchParams(path.split('?')[1] || '');
+  const lat = Number(q.get('lat'));
+  const lon = Number(q.get('lon'));
+  return {
+    lat: Number.isFinite(lat) ? lat : 28.6139,
+    lon: Number.isFinite(lon) ? lon : 77.2090,
+  };
+}
+
+function demoResponse(path) {
+  const endpoint = path.split('?')[0];
+  const { lat, lon } = getDemoCoords(path);
+  const now = new Date();
+  const isoHour = now.toISOString().slice(0, 13) + ':00:00Z';
+
+  if (endpoint === '/weather/current') {
+    return {
+      temperature: { celsius: 29.4, feels_like: 33.1 },
+      humidity: 58,
+      pressure: 1004,
+      uv_index: 6.2,
+      visibility_m: 9000,
+      wind: { speed_kmh: 14.1, gusts_kmh: 24.5, direction_deg: 220, cardinal: 'SW' },
+      condition: { icon: '☀️', label: 'Clear sky' },
+    };
+  }
+  if (endpoint === '/aqi/current') {
+    return {
+      aqi: 127,
+      category: { level: 'Unhealthy for Sensitive Groups', color: '#ff9100', health: 'Sensitive groups should reduce prolonged outdoor exertion.' },
+      pollutants: {
+        pm2_5: { value: 63.5, unit: 'μg/m³' },
+        pm10: { value: 94.2, unit: 'μg/m³' },
+        nitrogen_dioxide: { value: 36.8, unit: 'μg/m³' },
+        ozone: { value: 72.4, unit: 'μg/m³' },
+        sulphur_dioxide: { value: 12.3, unit: 'μg/m³' },
+        carbon_monoxide: { value: 620.0, unit: 'μg/m³' },
+      },
+    };
+  }
+  if (endpoint === '/alerts/active') {
+    return { alerts: [{ severity: 'moderate', title: 'AQI advisory', message: 'Air quality is elevated in this area. Consider mask use outdoors.' }] };
+  }
+  if (endpoint === '/satellite/fires') {
+    return {
+      fires: [
+        { lat: lat + 0.42, lon: lon - 0.31, frp: 16.2, confidence: 'nominal', date: now.toISOString().slice(0, 10) },
+        { lat: lat - 0.37, lon: lon + 0.48, frp: 22.8, confidence: 'high', date: now.toISOString().slice(0, 10) },
+      ],
+    };
+  }
+  if (endpoint === '/weather/forecast') {
+    return {
+      days: Array.from({ length: 7 }).map((_, i) => {
+        const d = new Date(now);
+        d.setDate(now.getDate() + i);
+        return {
+          date: d.toISOString().slice(0, 10),
+          condition: { icon: i % 3 === 0 ? '🌦️' : '☀️' },
+          temperature: { max: 31 - (i % 2), min: 22 + (i % 3) },
+          precipitation: { probability_pct: i % 3 === 0 ? 45 : 12 },
+        };
+      }),
+    };
+  }
+  if (endpoint === '/weather/hourly') {
+    return {
+      series: Array.from({ length: 24 }).map((_, i) => ({
+        temperature: 24 + Math.sin(i / 3) * 5,
+        precip_prob: Math.max(0, Math.round(20 + Math.cos(i / 2) * 25)),
+      })),
+    };
+  }
+  if (endpoint === '/aqi/forecast') {
+    return {
+      series: Array.from({ length: 24 }).map((_, i) => ({ aqi_us: 115 + Math.round(Math.sin(i / 4) * 18) })),
+    };
+  }
+  if (endpoint === '/analytics/health-risk') {
+    return {
+      risks: {
+        general: { group: 'General', risk_level: 'moderate' },
+        children: { group: 'Children', risk_level: 'unhealthy_sg' },
+        elderly: { group: 'Elderly', risk_level: 'unhealthy_sg' },
+      },
+      exceedances: ['PM2.5 above recommended threshold'],
+    };
+  }
+  if (endpoint === '/analytics/pollution-sources') {
+    return {
+      sources: [
+        { label: 'Traffic emissions', confidence: 74, indicators: ['NO₂', 'CO', 'rush-hour profile'] },
+        { label: 'Dust resuspension', confidence: 57, indicators: ['PM10', 'dry conditions'] },
+        { label: 'Industrial activity', confidence: 41, indicators: ['SO₂', 'regional pattern'] },
+      ],
+    };
+  }
+  if (endpoint === '/satellite/smoke') {
+    return { current: { smoke_level: 'moderate', aerosol_optical_depth: 0.38, dust_ug_m3: 27.4 } };
+  }
+  if (endpoint === '/analytics/aqi-trend') {
+    const HOURS_PER_POINT = 12;
+    const MS_PER_HOUR = 60 * 60 * 1000;
+    const series = Array.from({ length: 12 }).map((_, i) => ({
+      time: new Date(now.getTime() - (11 - i) * HOURS_PER_POINT * MS_PER_HOUR).toISOString(),
+      aqi: 102 + Math.round(Math.sin(i / 2) * 24),
+    }));
+    const values = series.map(s => s.aqi);
+    return {
+      series,
+      stats: {
+        mean: Math.round(values.reduce((a, b) => a + b, 0) / values.length),
+        max: Math.max(...values),
+        min: Math.min(...values),
+        latest: values[values.length - 1],
+      },
+    };
+  }
+  if (endpoint === '/locations') {
+    return {
+      locations: [
+        { city: 'Delhi', country: 'IN', lat: 28.6139, lon: 77.2090, aqi_us: 127, aqi_category: 'Unhealthy for Sensitive Groups' },
+        { city: 'Lahore', country: 'PK', lat: 31.5497, lon: 74.3436, aqi_us: 156, aqi_category: 'Unhealthy' },
+        { city: 'Bangkok', country: 'TH', lat: 13.7563, lon: 100.5018, aqi_us: 89, aqi_category: 'Moderate' },
+        { city: 'Jakarta', country: 'ID', lat: -6.2088, lon: 106.8456, aqi_us: 98, aqi_category: 'Moderate' },
+      ],
+    };
+  }
+  if (endpoint === '/aqi/heatmap') {
+    return {
+      cells: [
+        { lat, lon, aqi: 127 },
+        { lat: lat + 0.25, lon: lon + 0.25, aqi: 141 },
+        { lat: lat - 0.25, lon: lon + 0.25, aqi: 118 },
+        { lat: lat + 0.25, lon: lon - 0.25, aqi: 109 },
+        { lat: lat - 0.25, lon: lon - 0.25, aqi: 132 },
+      ],
+      generated_at: isoHour,
+    };
+  }
+  return null;
+}
 
 // ─── STATE ───────────────────────────────────────────────────────────────────
 let state = {
@@ -1068,6 +1236,18 @@ async function apiGet(path) {
     const resp = await fetch(API_BASE + path, { signal: controller.signal });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     return resp.json();
+  } catch (e) {
+    if (STATIC_DEMO_MODE) {
+      const demo = demoResponse(path);
+      if (demo) {
+        if (!shownStaticDemoToast) {
+          shownStaticDemoToast = true;
+          toast('Running in static demo mode. Add ?api=<your_backend>/api/v1 to use live backend.', 'info');
+        }
+        return demo;
+      }
+    }
+    throw e;
   } finally {
     clearTimeout(timeoutId);
   }
