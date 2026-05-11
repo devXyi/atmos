@@ -824,17 +824,30 @@ header {
 // ─── CONFIG ─────────────────────────────────────────────────────────────────
 // Point to your Go gateway. Override via ?api=... (persisted), localStorage.ATMOS_API, or window.ATMOS_API.
 const query = new URLSearchParams(window.location.search);
-const queryApiBase = query.get('api');
+const queryApiRaw = query.get('api');
+
+function normalizeApiBase(apiBase) {
+  if (!apiBase) return null;
+  try {
+    const u = new URL(apiBase);
+    if (!['http:', 'https:'].includes(u.protocol)) return null;
+    return u.toString().replace(/\/+$/, '');
+  } catch (_) {
+    return null;
+  }
+}
+
+const queryApiBase = normalizeApiBase(queryApiRaw);
 let storedApiBase = null;
 try {
   if (queryApiBase) window.localStorage.setItem('ATMOS_API', queryApiBase);
-  storedApiBase = window.localStorage.getItem('ATMOS_API');
+  storedApiBase = normalizeApiBase(window.localStorage.getItem('ATMOS_API'));
 } catch (_) { /* storage may be unavailable */ }
 
 const DEFAULT_API_BASE = window.location.protocol === 'file:'
   ? 'http://localhost:8080/api/v1'
   : `${window.location.origin}/api/v1`;
-const API_BASE = (queryApiBase || storedApiBase || window.ATMOS_API || DEFAULT_API_BASE).replace(/\/+$/, '');
+const API_BASE = normalizeApiBase(queryApiBase || storedApiBase || window.ATMOS_API) || DEFAULT_API_BASE.replace(/\/+$/, '');
 const API_TIMEOUT_MS = 12000; // 12s hard timeout for unreachable static deployments
 const GEOCODE_URL = 'https://nominatim.openstreetmap.org';
 const IS_GITHUB_PAGES = window.location.hostname.endsWith('github.io');
@@ -899,7 +912,7 @@ function demoResponse(path) {
         const d = new Date(now);
         d.setDate(now.getDate() + i);
         return {
-          date: d.toISOString(),
+          date: d.toISOString().slice(0, 10),
           condition: { icon: i % 3 === 0 ? '🌦️' : '☀️' },
           temperature: { max: 31 - (i % 2), min: 22 + (i % 3) },
           precipitation: { probability_pct: i % 3 === 0 ? 45 : 12 },
@@ -943,8 +956,10 @@ function demoResponse(path) {
     return { current: { smoke_level: 'moderate', aerosol_optical_depth: 0.38, dust_ug_m3: 27.4 } };
   }
   if (endpoint === '/analytics/aqi-trend') {
+    const HOURS_PER_POINT = 12;
+    const MS_PER_HOUR = 60 * 60 * 1000;
     const series = Array.from({ length: 12 }).map((_, i) => ({
-      time: new Date(now.getTime() - (11 - i) * 12 * 60 * 60 * 1000).toISOString(),
+      time: new Date(now.getTime() - (11 - i) * HOURS_PER_POINT * MS_PER_HOUR).toISOString(),
       aqi: 102 + Math.round(Math.sin(i / 2) * 24),
     }));
     const values = series.map(s => s.aqi);
