@@ -2,6 +2,8 @@
 
 Real-time AQI, weather, fire detection, and atmospheric analytics.
 
+> GitHub Pages runs the frontend in static demo mode; provide `?api=<backend>/api/v1` for live data.
+
 ## Architecture
 
 ```
@@ -22,7 +24,7 @@ Python Data Engine  :8000
 | Source | Data | Key needed |
 |--------|------|-----------|
 | [Open-Meteo](https://open-meteo.com) | Weather, PM2.5, PM10, NO2, O3, SO2, CO, AQI | ❌ None |
-| [WAQI](https://aqicn.org/data-platform/token/) | Station AQI, dominant pollutant | ✅ Free |
+| [WAQI / AQICN](https://aqicn.org/data-platform/token/) | Station AQI, dominant pollutant | ✅ Free |
 | [NASA FIRMS](https://firms.modaps.eosdis.nasa.gov/api/) | Active fire detections (VIIRS) | ✅ Free |
 | [Nominatim](https://nominatim.openstreetmap.org) | Geocoding / reverse geocoding | ❌ None |
 
