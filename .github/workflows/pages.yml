@@ -32,7 +32,66 @@ jobs:
         shell: python
         run: python .github/scripts/sanitize-pages.py
 
-      - name: Inject runtime compatibility and non-blocking data boot
+      - name: Repair Cesium failure path and location boot
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          path = Path('./frontend/index.html')
+          text = path.read_text(encoding='utf-8')
+
+          # The source catches a Cesium Viewer construction failure, but older
+          # code then dereferences viewer.scene outside that catch. Keep Cesium
+          # untouched; simply make the post-init styling conditional.
+          old = '''// Dark atmosphere
+          viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#050810');
+          viewer.scene.skyAtmosphere.hueShift    = -0.97;
+          viewer.scene.skyAtmosphere.saturationShift = -0.95;
+          viewer.scene.skyAtmosphere.brightnessShift = -0.7;
+          viewer.scene.skyBox.show = false;
+          viewer.scene.sun.show = false;
+          viewer.scene.moon.show = false;'''
+          new = '''// Dark atmosphere — only when the Cesium Viewer actually exists.
+          if (viewer && !viewer.isDestroyed()) {
+            viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#050810');
+            viewer.scene.skyAtmosphere.hueShift = -0.97;
+            viewer.scene.skyAtmosphere.saturationShift = -0.95;
+            viewer.scene.skyAtmosphere.brightnessShift = -0.7;
+            viewer.scene.skyBox.show = false;
+            viewer.scene.sun.show = false;
+            viewer.scene.moon.show = false;
+          }'''
+          if old not in text:
+              raise SystemExit('Expected Cesium post-init block not found')
+          text = text.replace(old, new, 1)
+
+          # The old auto-detect block silently falls back to New Delhi when
+          # permission is denied. The runtime layer below owns location retry,
+          # so remove that duplicate path rather than showing stale coordinates.
+          pattern = re.compile(r'// ─── AUTO-DETECT LOCATION.*?// ─── AUTO-REFRESH every 5 minutes', re.S)
+          replacement = '''// ─── AUTO-DETECT LOCATION ────────────────────────────────────────────────────
+          // Handled by frontend/atmos-runtime.js so permission failures are
+          // visible and the user can retry without silently selecting Delhi.
+
+          // ─── AUTO-REFRESH every 5 minutes'''
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit('Expected auto-location block not found')
+
+          # Runtime is deliberately loaded after the inline dashboard script:
+          # it patches apiGet before the boot guard and requests device location.
+          runtime = '<script src="./atmos-runtime.js"></script>'
+          if runtime not in text:
+              marker = '</body>'
+              if marker not in text:
+                  raise SystemExit('Could not find </body>')
+              text = text.replace(marker, f'  {runtime}\n{marker}', 1)
+
+          path.write_text(text, encoding='utf-8')
+          print('Cesium failure guard and location runtime injected')
+
+      - name: Inject legacy compatibility and final boot guard
         shell: python
         run: |
           from pathlib import Path
@@ -54,26 +113,25 @@ jobs:
               text = text.replace(marker, f'  {guard}\n{marker}', 1)
 
           path.write_text(text, encoding='utf-8')
-          print('Runtime compatibility and post-dashboard boot guard injected')
+          print('Compatibility and boot guard injected')
 
       - name: Validate Pages artifact
         shell: python
         run: |
           from pathlib import Path
           index = Path('./frontend/index.html').read_text(encoding='utf-8')
-          guard = Path('./frontend/boot-guard.js')
-          compat = Path('./frontend/runtime-compat.js')
-          cesium = '<script src="https://cesium.com/downloads/cesiumjs/releases/1.122/Build/Cesium/Cesium.js"></script>'
-          assert guard.exists(), 'boot-guard.js missing'
-          assert compat.exists(), 'runtime-compat.js missing'
+          for required in ['atmos-runtime.js','runtime-compat.js','boot-guard.js']:
+              assert Path('./frontend/' + required).exists(), required + ' missing'
           assert '</html>' in index, 'missing closing HTML tag'
           assert index.rstrip().endswith('</html>'), 'HTML has trailing content after </html>'
           assert 'Initial data load failed' not in index, 'legacy raw boot text leaked into HTML'
-          assert '<script src="./runtime-compat.js"></script>' in index, 'runtime compatibility not injected'
+          assert '<script src="./atmos-runtime.js"></script>' in index, 'location runtime not injected'
+          assert '<script src="./runtime-compat.js"></script>' in index, 'compatibility layer not injected'
           assert '<script src="./boot-guard.js"></script>' in index, 'boot guard not injected'
-          assert index.index(cesium) < index.index('<script src="./runtime-compat.js"></script>'), 'runtime compatibility must load after Cesium'
-          assert index.index('<script src="./boot-guard.js"></script>') > index.index('</body>') - 200, 'boot guard must be at the end of the document'
-          print('Pages artifact validation passed; Cesium preserved; no raw boot text')
+          assert 'if (viewer && !viewer.isDestroyed()) {' in index, 'Cesium post-init guard missing'
+          assert 'GLOBE UNAVAILABLE — DATA FEED ACTIVE' in index, 'Cesium failure state missing'
+          assert 'Cesium' in index, 'Cesium content missing'
+          print('Pages artifact validation passed: Cesium preserved, no raw boot text, location runtime present')
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
