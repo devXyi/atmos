@@ -28,72 +28,76 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      - name: Sanitize frontend document
-        shell: python
-        run: python .github/scripts/sanitize-pages.py
-
-      - name: Repair frontend boot path
+      - name: Build deterministic Pages artifact
         shell: python
         run: |
           from pathlib import Path
-          import re
 
           path = Path('frontend/index.html')
           text = path.read_text(encoding='utf-8')
 
-          # Repair the known Cesium failure path without changing Cesium itself.
-          # Match the block by its semantic boundaries rather than indentation.
-          atmosphere = re.compile(
-              r"//\s*Dark atmosphere.*?viewer\.scene\.moon\.show\s*=\s*false\s*;",
-              re.S,
-          )
-          replacement = """// Dark atmosphere — only when the Cesium Viewer exists.
-          if (viewer && !viewer.isDestroyed()) {
+          # Never publish accidental text/JavaScript after the document.
+          end = text.lower().rfind('</html>')
+          if end < 0:
+              raise SystemExit('frontend/index.html has no </html>')
+          text = text[:end + len('</html>')] + '\n'
+
+          # Make the existing Cesium failure path safe without changing Cesium.
+          # Use stable section markers instead of formatting-sensitive regexes.
+          atmosphere_start = text.find('// Dark atmosphere')
+          atmosphere_end = text.find('// Fly to initial location', atmosphere_start)
+          if atmosphere_start < 0 or atmosphere_end < 0:
+              raise SystemExit('Cesium atmosphere section markers not found')
+          atmosphere = '''// Dark atmosphere — only when the Cesium Viewer exists.
+          if (viewer && typeof viewer.isDestroyed === 'function' && !viewer.isDestroyed()) {
             viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#050810');
             viewer.scene.skyAtmosphere.hueShift = -0.97;
             viewer.scene.skyAtmosphere.saturationShift = -0.95;
-            viewer.scene.skyAtmosphere.brightnessShift = -0.7;
+            viewer.scene.brightnessShift = -0.7;
             viewer.scene.skyBox.show = false;
             viewer.scene.sun.show = false;
             viewer.scene.moon.show = false;
-          }"""
-          text, n = atmosphere.subn(replacement, text, count=1)
-          if n != 1:
-              raise SystemExit('Could not locate Cesium atmosphere block')
+          }
 
-          # Remove the old location gate. It can silently choose New Delhi when
-          # permission is denied and can block startup while the browser waits.
-          location_block = re.compile(
-              r"//\s*─── AUTO-DETECT LOCATION.*?(?=//\s*─── AUTO-REFRESH every 5 minutes)",
-              re.S,
-          )
-          replacement = """// ─── AUTO-DETECT LOCATION ────────────────────────────────────────────────────
-          // Device location is handled by atmos-runtime.js. The dashboard boots
-          // immediately and location is an optional enhancement.
+          '''
+          text = text[:atmosphere_start] + atmosphere + text[atmosphere_end:]
 
-          """
-          text, n = location_block.subn(replacement, text, count=1)
-          if n != 1:
-              raise SystemExit('Could not locate old auto-location block')
+          # Do not make device geolocation a startup gate and do not silently
+          # choose New Delhi when permission is denied. atmos-runtime.js owns
+          # the optional location request/retry path.
+          location_start = text.find('// ─── AUTO-DETECT LOCATION')
+          location_end = text.find('// ─── AUTO-REFRESH every 5 minutes', location_start)
+          if location_start < 0 or location_end < 0:
+              raise SystemExit('Auto-location section markers not found')
+          location_replacement = '''// ─── AUTO-DETECT LOCATION ────────────────────────────────────────────────────
+          // Device location is handled by atmos-runtime.js. The dashboard does
+          // not block on permission or silently substitute New Delhi.
 
-          # Keep the existing Cesium library and existing compatibility layer.
+          '''
+          text = text[:location_start] + location_replacement + text[location_end:]
+
           cesium = '<script src="https://cesium.com/downloads/cesiumjs/releases/1.122/Build/Cesium/Cesium.js"></script>'
           compat = '<script src="./runtime-compat.js"></script>'
           if compat not in text:
               if cesium not in text:
-                  raise SystemExit('Cesium 1.122 script is missing')
+                  raise SystemExit('Cesium 1.122 script missing')
               text = text.replace(cesium, cesium + '\n' + compat, 1)
 
           runtime = '<script src="./atmos-runtime.js"></script>'
-          if runtime not in text:
-              text = text.replace('</body>', '  ' + runtime + '\n</body>', 1)
-
           guard = '<script src="./boot-guard.js"></script>'
-          if guard not in text:
-              text = text.replace('</body>', '  ' + guard + '\n</body>', 1)
+          if runtime not in text or guard not in text:
+              body = text.find('</body>')
+              if body < 0:
+                  raise SystemExit('Missing </body>')
+              additions = ''
+              if runtime not in text:
+                  additions += '  ' + runtime + '\n'
+              if guard not in text:
+                  additions += '  ' + guard + '\n'
+              text = text[:body] + additions + text[body:]
 
           path.write_text(text, encoding='utf-8')
-          print('Frontend boot repair complete')
+          print('Deterministic Pages artifact built')
 
       - name: Validate Pages artifact
         shell: python
@@ -102,15 +106,14 @@ jobs:
           index = Path('frontend/index.html').read_text(encoding='utf-8')
           assert index.rstrip().endswith('</html>'), 'HTML has trailing content after </html>'
           assert 'Initial data load failed' not in index, 'legacy boot text leaked into HTML'
-          assert 'Cesium' in index, 'Cesium content missing'
           assert 'https://cesium.com/downloads/cesiumjs/releases/1.122/' in index, 'Cesium 1.122 missing'
-          assert 'if (viewer && !viewer.isDestroyed()) {' in index, 'Cesium failure guard missing'
+          assert 'if (viewer && typeof viewer.isDestroyed === \'function\'' in index, 'Cesium failure guard missing'
+          assert '<script src="./runtime-compat.js"></script>' in index, 'runtime compatibility layer missing'
           assert '<script src="./atmos-runtime.js"></script>' in index, 'location runtime missing'
-          assert '<script src="./runtime-compat.js"></script>' in index, 'compatibility layer missing'
           assert '<script src="./boot-guard.js"></script>' in index, 'boot guard missing'
-          assert Path('frontend/atmos-runtime.js').exists(), 'atmos-runtime.js missing'
-          assert Path('frontend/runtime-compat.js').exists(), 'runtime-compat.js missing'
-          assert Path('frontend/boot-guard.js').exists(), 'boot-guard.js missing'
+          assert Path('frontend/runtime-compat.js').exists()
+          assert Path('frontend/atmos-runtime.js').exists()
+          assert Path('frontend/boot-guard.js').exists()
           print('Pages artifact validation passed')
 
       - name: Upload artifact
