@@ -28,6 +28,32 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      - name: Inject non-blocking data boot guard
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('./frontend/index.html')
+          text = path.read_text(encoding='utf-8')
+          tag = '<script src="./boot-guard.js"></script>'
+          if tag not in text:
+              marker = '</head>'
+              if marker not in text:
+                  raise SystemExit('Could not find </head> in frontend/index.html')
+              text = text.replace(marker, f'  {tag}\n{marker}', 1)
+              path.write_text(text, encoding='utf-8')
+          print('Pages boot guard injected')
+
+      - name: Validate Pages artifact
+        shell: python
+        run: |
+          from pathlib import Path
+          index = Path('./frontend/index.html').read_text(encoding='utf-8')
+          guard = Path('./frontend/boot-guard.js')
+          assert guard.exists(), 'boot-guard.js missing'
+          assert '<script src="./boot-guard.js"></script>' in index, 'boot guard not injected'
+          assert 'https://cesium.com/downloads/cesiumjs/releases/1.122/Build/Cesium/Cesium.js' in index, 'Cesium script missing'
+          print('Pages artifact validation passed; Cesium preserved')
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
