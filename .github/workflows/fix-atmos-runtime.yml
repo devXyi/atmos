@@ -1,0 +1,98 @@
+name: Fix Atmos runtime
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: ${{ !contains(github.event.head_commit.message, '[runtime-fix-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch frontend boot sequence
+        shell: python
+        run: |
+          from pathlib import Path
+
+          p = Path('frontend/index.html')
+          s = p.read_text(encoding='utf-8')
+
+          old_config = """const queryApiBase = normalizeApiBase(queryApiRaw);\nlet storedApiBase = null;\ntry {\n  if (queryApiBase) window.localStorage.setItem('ATMOS_API', queryApiBase);\n  storedApiBase = normalizeApiBase(window.localStorage.getItem('ATMOS_API'));\n} catch (_) { /* storage may be unavailable */ }\n\nconst DEFAULT_API_BASE = window.location.protocol === 'file:'\n  ? 'http://localhost:8080/api/v1'\n  : `${window.location.origin}/api/v1`;\nconst API_BASE = normalizeApiBase(queryApiBase || storedApiBase || window.ATMOS_API) || DEFAULT_API_BASE;\nconst API_TIMEOUT_MS = 12000; // 12s hard timeout for unreachable static deployments\nconst GEOCODE_URL = 'https://nominatim.openstreetmap.org';\nconst IS_GITHUB_PAGES = window.location.hostname.endsWith('github.io');\nconst STATIC_DEMO_MODE = IS_GITHUB_PAGES && !(queryApiBase || storedApiBase || window.ATMOS_API);\nlet shownStaticDemoToast = false;"""
+
+          new_config = """const queryApiBase = normalizeApiBase(queryApiRaw);\nconst GEOCODE_URL = 'https://nominatim.openstreetmap.org';\nconst IS_GITHUB_PAGES = window.location.hostname.endsWith('github.io');\n\n// GitHub Pages has no local Go gateway. Only an explicit backend URL opts into live API mode.\nlet storedApiBase = null;\ntry {\n  if (queryApiBase) window.localStorage.setItem('ATMOS_API', queryApiBase);\n  if (!IS_GITHUB_PAGES) storedApiBase = normalizeApiBase(window.localStorage.getItem('ATMOS_API'));\n} catch (_) {}\n\nconst DEFAULT_API_BASE = window.location.protocol === 'file:'\n  ? 'http://localhost:8080/api/v1'\n  : `${window.location.origin}/api/v1`;\nconst explicitApiBase = queryApiBase || window.ATMOS_API || (!IS_GITHUB_PAGES ? storedApiBase : null);\nconst API_BASE = normalizeApiBase(explicitApiBase) || DEFAULT_API_BASE;\nconst API_TIMEOUT_MS = 12000;\nconst STATIC_DEMO_MODE = IS_GITHUB_PAGES && !explicitApiBase;\nlet shownStaticDemoToast = false;"""
+          if old_config in s:
+              s = s.replace(old_config, new_config, 1)
+          elif 'const explicitApiBase =' not in s:
+              raise SystemExit('API config block not found')
+
+          # Return built-in demo data before making any network request on Pages.
+          old_api = """async function apiGet(path) {\n  const controller = new AbortController();\n  const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);\n  try {\n    const resp = await fetch(API_BASE + path, { signal: controller.signal });\n    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);\n    return resp.json();\n  } catch (e) {\n    if (STATIC_DEMO_MODE) {\n      const demo = demoResponse(path);\n      if (demo) {\n        if (!shownStaticDemoToast) {\n          shownStaticDemoToast = true;\n          toast('Running in static demo mode. Add ?api=<your_backend>/api/v1 to use live backend.', 'info');\n        }\n        return demo;\n      }\n    }\n    throw e;\n  } finally {\n    clearTimeout(timeoutId);\n  }\n}"""
+          new_api = """async function apiGet(path) {\n  if (STATIC_DEMO_MODE) {\n    const demo = demoResponse(path);\n    if (demo) {\n      if (!shownStaticDemoToast) {\n        shownStaticDemoToast = true;\n        toast('Running in static demo mode. Add ?api=<your_backend>/api/v1 to use live backend.', 'info');\n      }\n      return demo;\n    }\n  }\n\n  const controller = new AbortController();\n  const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);\n  try {\n    const resp = await fetch(API_BASE + path, { signal: controller.signal });\n    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);\n    return resp.json();\n  } finally {\n    clearTimeout(timeoutId);\n  }\n}"""
+          if old_api in s:
+              s = s.replace(old_api, new_api, 1)
+          elif 'if (STATIC_DEMO_MODE)' not in s:
+              raise SystemExit('apiGet block not found')
+
+          # Cesium 1.122 can throw during synchronous viewer creation. The globe must never prevent the data UI from booting.
+          old_cesium = """const viewer = new Cesium.Viewer('cesium-container', {\n  terrainProvider: Cesium.createWorldTerrain({ requestVertexNormals: true }),\n  imageryProvider: new Cesium.IonImageryProvider({ assetId: 3954 }), // Sentinel-2\n  animation: false,\n  baseLayerPicker: false,\n  fullscreenButton: false,\n  geocoder: false,\n  homeButton: false,\n  infoBox: false,\n  sceneModePicker: false,\n  selectionIndicator: false,\n  timeline: false,\n  navigationHelpButton: false,\n  scene3DOnly: true,\n});"""
+          new_cesium = """let viewer = null;\ntry {\n  viewer = new Cesium.Viewer('cesium-container', {\n    terrainProvider: new Cesium.EllipsoidTerrainProvider(),\n    baseLayer: false,\n    animation: false,\n    baseLayerPicker: false,\n    fullscreenButton: false,\n    geocoder: false,\n    homeButton: false,\n    infoBox: false,\n    sceneModePicker: false,\n    selectionIndicator: false,\n    timeline: false,\n    navigationHelpButton: false,\n    scene3DOnly: true,\n  });\n\n  // Optional imagery/terrain upgrades happen after boot and can fail safely.\n  if (Cesium.createWorldTerrainAsync) {\n    Cesium.createWorldTerrainAsync({ requestVertexNormals: true })\n      .then(t => { if (viewer && !viewer.isDestroyed()) viewer.terrainProvider = t; })\n      .catch(e => console.warn('Terrain unavailable:', e));\n  }\n\n  if (Cesium.IonImageryProvider && Cesium.ImageryLayer?.fromProviderAsync) {\n    Cesium.ImageryLayer.fromProviderAsync(Cesium.IonImageryProvider.fromAssetId(3954))\n      .then(layer => { if (viewer && !viewer.isDestroyed()) viewer.imageryLayers.add(layer); })\n      .catch(e => console.warn('Sentinel imagery unavailable:', e));\n  }\n} catch (error) {\n  console.error('Cesium initialization failed; continuing with data dashboard:', error);\n  document.getElementById('cesium-container').innerHTML = '<div style=\"height:100%;display:flex;align-items:center;justify-content:center;color:rgba(232,236,244,.35);font:11px Space Mono,monospace;letter-spacing:.08em\">GLOBE UNAVAILABLE — DATA FEED ACTIVE</div>';\n}"""
+          if old_cesium in s:
+              s = s.replace(old_cesium, new_cesium, 1)
+          elif 'let viewer = null;' not in s:
+              raise SystemExit('Cesium viewer block not found')
+
+          s = s.replace("function flyTo(lat, lon, height = 2000000) {\n  viewer.camera.flyTo({", "function flyTo(lat, lon, height = 2000000) {\n  if (!viewer || viewer.isDestroyed()) return;\n  viewer.camera.flyTo({", 1)
+          s = s.replace("viewer.screenSpaceEventHandler.setInputAction(async (click) => {", "if (viewer) viewer.screenSpaceEventHandler.setInputAction(async (click) => {", 1)
+          s = s.replace("async function renderAQIHeatmap() {\n  // Remove old", "async function renderAQIHeatmap() {\n  if (!viewer || viewer.isDestroyed()) return;\n  // Remove old", 1)
+          s = s.replace("function renderFireLayer() {\n  state.fireEntities", "function renderFireLayer() {\n  if (!viewer || viewer.isDestroyed()) return;\n  state.fireEntities", 1)
+          s = s.replace("function renderCityMarkers() {\n  state.cityEntities", "function renderCityMarkers() {\n  if (!viewer || viewer.isDestroyed()) return;\n  state.cityEntities", 1)
+
+          # Start data loading independently of Cesium. This is the critical boot guarantee.
+          marker = "// ─── FETCH ALL DATA ───────────────────────────────────────────────────────────\nasync function fetchAll() {"
+          if marker in s and "// Boot data immediately" not in s:
+              s = s.replace(marker, "// ─── FETCH ALL DATA ───────────────────────────────────────────────────────────\nasync function fetchAll() {", 1)
+
+          # Ensure the initial location fetch exists even if the old startup call was after Cesium setup.
+          startup = "setLocation(state.lat, state.lon);"
+          if startup not in s:
+              s += "\n\n// Boot the data dashboard even when Cesium is unavailable.\nfetchAll().catch(error => console.error('Initial data load failed:', error));\n"
+
+          p.write_text(s, encoding='utf-8')
+          print('runtime patch applied')
+
+      - name: Validate
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s = Path('frontend/index.html').read_text(encoding='utf-8')
+          checks = [
+            'const explicitApiBase =',
+            'const STATIC_DEMO_MODE = IS_GITHUB_PAGES && !explicitApiBase;',
+            'if (STATIC_DEMO_MODE)',
+            'let viewer = null;',
+            'Cesium.IonImageryProvider.fromAssetId(3954)',
+            'new Cesium.EllipsoidTerrainProvider()',
+            'if (!viewer || viewer.isDestroyed()) return;',
+          ]
+          for check in checks:
+            assert check in s, check
+          print('runtime validation passed')
+          PY
+
+      - name: Commit and remove fixer
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm -f .github/workflows/fix-atmos-runtime.yml
+          git add frontend/index.html .github/workflows/fix-atmos-runtime.yml
+          git commit -m 'fix: make Atmos dashboard boot reliably [runtime-fix-applied]'
+          git push
