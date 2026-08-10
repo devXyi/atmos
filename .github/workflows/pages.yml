@@ -36,11 +36,14 @@ jobs:
           text = path.read_text(encoding='utf-8')
 
           compat = '<script src="./runtime-compat.js"></script>'
+          cesium = '<script src="https://cesium.com/downloads/cesiumjs/releases/1.122/Build/Cesium/Cesium.js"></script>'
           if compat not in text:
-              marker = '</head>'
-              if marker not in text:
-                  raise SystemExit('Could not find </head> in frontend/index.html')
-              text = text.replace(marker, f'  {compat}\n{marker}', 1)
+              if cesium not in text:
+                  raise SystemExit('Could not find Cesium script in frontend/index.html')
+              # runtime-compat must execute after Cesium has loaded but before the
+              # inline Atmos dashboard script constructs the Viewer. Insert it
+              # immediately after Cesium's external script tag.
+              text = text.replace(cesium, cesium + f'\n  {compat}', 1)
 
           # The boot guard must run after the inline dashboard script has defined
           # fetchAll. Injecting it into <head> made the old guard a no-op.
@@ -61,13 +64,14 @@ jobs:
           index = Path('./frontend/index.html').read_text(encoding='utf-8')
           guard = Path('./frontend/boot-guard.js')
           compat = Path('./frontend/runtime-compat.js')
+          cesium = '<script src="https://cesium.com/downloads/cesiumjs/releases/1.122/Build/Cesium/Cesium.js"></script>'
           assert guard.exists(), 'boot-guard.js missing'
           assert compat.exists(), 'runtime-compat.js missing'
           assert '<script src="./runtime-compat.js"></script>' in index, 'runtime compatibility not injected'
           assert '<script src="./boot-guard.js"></script>' in index, 'boot guard not injected'
-          assert index.index('<script src="./runtime-compat.js"></script>') < index.index('<script src="https://cesium.com/downloads/cesiumjs/releases/1.122/Build/Cesium/Cesium.js"></script>'), 'compatibility layer must load before Cesium'
-          assert index.index('<script src="./boot-guard.js"></script>') > index.index('</script>', index.index('<script src="https://cesium.com/downloads/cesiumjs/releases/1.122/Build/Cesium/Cesium.js"></script>')), 'boot guard must be after the dashboard script'
-          assert 'https://cesium.com/downloads/cesiumjs/releases/1.122/Build/Cesium/Cesium.js' in index, 'Cesium script missing'
+          assert index.index(cesium) < index.index('<script src="./runtime-compat.js"></script>'), 'runtime compatibility must load after Cesium'
+          assert index.index('<script src="./boot-guard.js"></script>') > index.index('</body>') - 200, 'boot guard must be at the end of the document'
+          assert cesium in index, 'Cesium script missing'
           print('Pages artifact validation passed; Cesium preserved')
 
       - name: Upload artifact
