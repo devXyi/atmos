@@ -36,14 +36,11 @@ jobs:
           path = Path('frontend/index.html')
           text = path.read_text(encoding='utf-8')
 
-          # Never publish accidental text/JavaScript after the document.
           end = text.lower().rfind('</html>')
           if end < 0:
               raise SystemExit('frontend/index.html has no </html>')
           text = text[:end + len('</html>')] + '\n'
 
-          # Make the existing Cesium failure path safe without changing Cesium.
-          # Use stable section markers instead of formatting-sensitive regexes.
           atmosphere_start = text.find('// Dark atmosphere')
           atmosphere_end = text.find('// Fly to initial location', atmosphere_start)
           if atmosphere_start < 0 or atmosphere_end < 0:
@@ -62,9 +59,6 @@ jobs:
           '''
           text = text[:atmosphere_start] + atmosphere + text[atmosphere_end:]
 
-          # Do not make device geolocation a startup gate and do not silently
-          # choose New Delhi when permission is denied. atmos-runtime.js owns
-          # the optional location request/retry path.
           location_start = text.find('// ─── AUTO-DETECT LOCATION')
           location_end = text.find('// ─── AUTO-REFRESH every 5 minutes', location_start)
           if location_start < 0 or location_end < 0:
@@ -78,10 +72,13 @@ jobs:
 
           cesium = '<script src="https://cesium.com/downloads/cesiumjs/releases/1.122/Build/Cesium/Cesium.js"></script>'
           compat = '<script src="./runtime-compat.js"></script>'
+          recovery = '<script src="./globe-recovery.js"></script>'
+          if cesium not in text:
+              raise SystemExit('Cesium 1.122 script missing')
           if compat not in text:
-              if cesium not in text:
-                  raise SystemExit('Cesium 1.122 script missing')
               text = text.replace(cesium, cesium + '\n' + compat, 1)
+          if recovery not in text:
+              text = text.replace(compat, compat + '\n' + recovery, 1)
 
           runtime = '<script src="./atmos-runtime.js"></script>'
           guard = '<script src="./boot-guard.js"></script>'
@@ -96,6 +93,12 @@ jobs:
                   additions += '  ' + guard + '\n'
               text = text[:body] + additions + text[body:]
 
+          # The fallback script must execute after the dashboard's inline script
+          # so it can detect whether Cesium actually produced a viewer canvas.
+          fallback = '<script src="./globe-recovery.js"></script>'
+          # It is already loaded before the inline script for constructor recovery;
+          # do not duplicate it at the end.
+
           path.write_text(text, encoding='utf-8')
           print('Deterministic Pages artifact built')
 
@@ -109,9 +112,11 @@ jobs:
           assert 'https://cesium.com/downloads/cesiumjs/releases/1.122/' in index, 'Cesium 1.122 missing'
           assert 'if (viewer && typeof viewer.isDestroyed === \'function\'' in index, 'Cesium failure guard missing'
           assert '<script src="./runtime-compat.js"></script>' in index, 'runtime compatibility layer missing'
+          assert '<script src="./globe-recovery.js"></script>' in index, 'globe recovery layer missing'
           assert '<script src="./atmos-runtime.js"></script>' in index, 'location runtime missing'
           assert '<script src="./boot-guard.js"></script>' in index, 'boot guard missing'
           assert Path('frontend/runtime-compat.js').exists()
+          assert Path('frontend/globe-recovery.js').exists()
           assert Path('frontend/atmos-runtime.js').exists()
           assert Path('frontend/boot-guard.js').exists()
           print('Pages artifact validation passed')
