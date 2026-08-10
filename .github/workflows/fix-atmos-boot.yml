@@ -1,4 +1,4 @@
-name: Fix Atmos boot sequence
+name: Fix Atmos boot sequence (one-shot)
 
 on:
   push:
