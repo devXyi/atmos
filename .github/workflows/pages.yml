@@ -28,6 +28,10 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      - name: Sanitize frontend document
+        shell: python
+        run: python .github/scripts/sanitize-pages.py
+
       - name: Inject runtime compatibility and non-blocking data boot
         shell: python
         run: |
@@ -40,13 +44,8 @@ jobs:
           if compat not in text:
               if cesium not in text:
                   raise SystemExit('Could not find Cesium script in frontend/index.html')
-              # runtime-compat must execute after Cesium has loaded but before the
-              # inline Atmos dashboard script constructs the Viewer. Insert it
-              # immediately after Cesium's external script tag.
               text = text.replace(cesium, cesium + f'\n  {compat}', 1)
 
-          # The boot guard must run after the inline dashboard script has defined
-          # fetchAll. Injecting it into <head> made the old guard a no-op.
           guard = '<script src="./boot-guard.js"></script>'
           if guard not in text:
               marker = '</body>'
@@ -67,12 +66,14 @@ jobs:
           cesium = '<script src="https://cesium.com/downloads/cesiumjs/releases/1.122/Build/Cesium/Cesium.js"></script>'
           assert guard.exists(), 'boot-guard.js missing'
           assert compat.exists(), 'runtime-compat.js missing'
+          assert '</html>' in index, 'missing closing HTML tag'
+          assert index.rstrip().endswith('</html>'), 'HTML has trailing content after </html>'
+          assert 'Initial data load failed' not in index, 'legacy raw boot text leaked into HTML'
           assert '<script src="./runtime-compat.js"></script>' in index, 'runtime compatibility not injected'
           assert '<script src="./boot-guard.js"></script>' in index, 'boot guard not injected'
           assert index.index(cesium) < index.index('<script src="./runtime-compat.js"></script>'), 'runtime compatibility must load after Cesium'
           assert index.index('<script src="./boot-guard.js"></script>') > index.index('</body>') - 200, 'boot guard must be at the end of the document'
-          assert cesium in index, 'Cesium script missing'
-          print('Pages artifact validation passed; Cesium preserved')
+          print('Pages artifact validation passed; Cesium preserved; no raw boot text')
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
