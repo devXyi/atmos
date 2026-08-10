@@ -1,0 +1,173 @@
+name: Fix Atmos boot sequence
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch frontend boot sequence
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          path = Path("frontend/index.html")
+          text = path.read_text(encoding="utf-8")
+
+          # The dashboard must render immediately. Geolocation is optional and
+          # must never be a prerequisite for the first data render.
+          marker = "// BOOT FIX: data loading is independent of geolocation"
+          if marker not in text:
+              start = text.index("// ─── AUTO-DETECT LOCATION ─────────────────────────────────────────────────")
+              end = text.index("// ─── AUTO-REFRESH every 5 minutes ────────────────────────────────────────────", start)
+              replacement = r'''// ─── BOOT: DATA FIRST, LOCATION SECOND ───────────────────────────────────────
+// Render the default New Delhi snapshot immediately. Geolocation is only an
+// enhancement; a permission prompt, GPS timeout, or blocked location service
+// must never leave the dashboard in its initial loading state.
+// BOOT FIX: data loading is independent of geolocation
+fetchAll().catch(error => console.error('Initial data load failed:', error));
+
+// ─── AUTO-DETECT LOCATION ────────────────────────────────────────────────────
+if (navigator.geolocation) {
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      // setLocation fetches immediately and reverse-geocodes without blocking.
+      setLocation(pos.coords.latitude, pos.coords.longitude).catch(error => {
+        console.warn('Location update failed; keeping current dashboard data:', error);
+      });
+    },
+    error => {
+      console.info('Geolocation unavailable; keeping default location:', error?.message || error);
+    },
+    {
+      enableHighAccuracy: false,
+      timeout: 5000,
+      maximumAge: 300000,
+    }
+  );
+}
+
+'''
+              text = text[:start] + replacement + text[end:]
+
+          # setLocation must fetch the new coordinates before reverse geocoding.
+          # Nominatim is useful for the label, but it is not part of the data path.
+          old = '''async function setLocation(lat, lon) {
+  state.lat = lat;
+  state.lon = lon;
+  document.getElementById('hdr-coords').textContent = `${lat.toFixed(3)}, ${lon.toFixed(3)}`;
+  flyTo(lat, lon, 800000);
+
+  // Reverse geocode
+  try {
+    const r = await fetch(`${GEOCODE_URL}/reverse?lat=${lat}&lon=${lon}&format=json`);
+    const d = await r.json();
+    const city = d.address?.city || d.address?.town || d.address?.village || d.address?.county || '';
+    const country = d.address?.country_code?.toUpperCase() || '';
+    state.cityName = [city, country].filter(Boolean).join(', ') || `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+  } catch { state.cityName = `${lat.toFixed(2)}, ${lon.toFixed(2)}`; }
+
+  document.getElementById('hdr-city').textContent = state.cityName;
+  document.getElementById('search-input').value = '';
+
+  fetchAll();
+}'''
+          new = '''async function setLocation(lat, lon) {
+  state.lat = lat;
+  state.lon = lon;
+  document.getElementById('hdr-coords').textContent = `${lat.toFixed(3)}, ${lon.toFixed(3)}`;
+  flyTo(lat, lon, 800000);
+  document.getElementById('search-input').value = '';
+
+  // Data is the critical path. Start it before any third-party geocoding call.
+  const dataPromise = fetchAll();
+
+  // Reverse geocoding only supplies the display label. Give it a hard timeout
+  // so Nominatim/network issues can never block a location change.
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    try {
+      const r = await fetch(`${GEOCODE_URL}/reverse?lat=${lat}&lon=${lon}&format=json`, {
+        signal: controller.signal,
+        headers: { 'Accept': 'application/json' },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      const city = d.address?.city || d.address?.town || d.address?.village || d.address?.county || '';
+      const country = d.address?.country_code?.toUpperCase() || '';
+      state.cityName = [city, country].filter(Boolean).join(', ') || `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  } catch {
+    state.cityName = `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+  }
+
+  document.getElementById('hdr-city').textContent = state.cityName;
+  await dataPromise;
+}'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif "const dataPromise = fetchAll();" not in text:
+              raise SystemExit("setLocation block not found; refusing to make an unsafe partial patch")
+
+          # A previous automated repair accidentally appended JavaScript after
+          # </html>. It is dead/malformed and must not remain in the document.
+          if "</html>" in text:
+              html_end = text.rfind("</html>") + len("</html>")
+              trailing = text[html_end:]
+              if "// Boot the data dashboard even when Cesium is unavailable." in trailing:
+                  text = text[:html_end] + "\n"
+
+          path.write_text(text, encoding="utf-8")
+          print("Boot patch applied")
+
+      - name: Validate boot contract
+        shell: python
+        run: |
+          from pathlib import Path
+          s = Path("frontend/index.html").read_text(encoding="utf-8")
+          checks = [
+              "// BOOT FIX: data loading is independent of geolocation",
+              "fetchAll().catch(error => console.error('Initial data load failed:', error));",
+              "timeout: 5000,",
+              "const dataPromise = fetchAll();",
+              "signal: controller.signal",
+          ]
+          for check in checks:
+              assert check in s, f"missing: {check}"
+          assert s.rstrip().endswith("</html>"), "frontend/index.html has trailing content after </html>"
+          print("Boot validation passed")
+
+      - name: Commit frontend fix and remove one-shot fixer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm -f .github/workflows/fix-atmos-boot.yml
+          git add frontend/index.html .github/workflows/fix-atmos-boot.yml
+          if git diff --cached --quiet; then
+            echo 'No changes needed.'
+            exit 0
+          fi
+          git commit -m 'fix: make Atmos data boot independent of geolocation'
+          git push origin main
+          # A push made with GITHUB_TOKEN does not create another push-triggered
+          # workflow run. Explicitly dispatch Pages after the fixed file lands.
+          gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
