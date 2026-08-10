@@ -838,20 +838,23 @@ function normalizeApiBase(apiBase) {
 }
 
 const queryApiBase = normalizeApiBase(queryApiRaw);
+const GEOCODE_URL = 'https://nominatim.openstreetmap.org';
+const IS_GITHUB_PAGES = window.location.hostname.endsWith('github.io');
+
+// GitHub Pages has no local Go gateway. Only an explicit backend URL opts into live API mode.
 let storedApiBase = null;
 try {
   if (queryApiBase) window.localStorage.setItem('ATMOS_API', queryApiBase);
-  storedApiBase = normalizeApiBase(window.localStorage.getItem('ATMOS_API'));
-} catch (_) { /* storage may be unavailable */ }
+  if (!IS_GITHUB_PAGES) storedApiBase = normalizeApiBase(window.localStorage.getItem('ATMOS_API'));
+} catch (_) {}
 
 const DEFAULT_API_BASE = window.location.protocol === 'file:'
   ? 'http://localhost:8080/api/v1'
   : `${window.location.origin}/api/v1`;
-const API_BASE = normalizeApiBase(queryApiBase || storedApiBase || window.ATMOS_API) || DEFAULT_API_BASE;
-const API_TIMEOUT_MS = 12000; // 12s hard timeout for unreachable static deployments
-const GEOCODE_URL = 'https://nominatim.openstreetmap.org';
-const IS_GITHUB_PAGES = window.location.hostname.endsWith('github.io');
-const STATIC_DEMO_MODE = IS_GITHUB_PAGES && !(queryApiBase || storedApiBase || window.ATMOS_API);
+const explicitApiBase = queryApiBase || window.ATMOS_API || (!IS_GITHUB_PAGES ? storedApiBase : null);
+const API_BASE = normalizeApiBase(explicitApiBase) || DEFAULT_API_BASE;
+const API_TIMEOUT_MS = 12000;
+const STATIC_DEMO_MODE = IS_GITHUB_PAGES && !explicitApiBase;
 let shownStaticDemoToast = false;
 
 function getDemoCoords(path) {
@@ -1015,21 +1018,40 @@ let state = {
 // ─── CESIUM GLOBE ────────────────────────────────────────────────────────────
 Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlYWE1OWUxNy1mMWZiLTQzYjYtYTQ0OS0zMGU5ODkzMzgwNDMiLCJpZCI6MjU5LCJpYXQiOjE2NjcyNDkzNjJ9.KgCe55bqPhFCx1-OtrMmJy28TDqBbVfD_YaT4bVlpVs';
 
-const viewer = new Cesium.Viewer('cesium-container', {
-  terrainProvider: Cesium.createWorldTerrain({ requestVertexNormals: true }),
-  imageryProvider: new Cesium.IonImageryProvider({ assetId: 3954 }), // Sentinel-2
-  animation: false,
-  baseLayerPicker: false,
-  fullscreenButton: false,
-  geocoder: false,
-  homeButton: false,
-  infoBox: false,
-  sceneModePicker: false,
-  selectionIndicator: false,
-  timeline: false,
-  navigationHelpButton: false,
-  scene3DOnly: true,
-});
+let viewer = null;
+try {
+  viewer = new Cesium.Viewer('cesium-container', {
+    terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+    baseLayer: false,
+    animation: false,
+    baseLayerPicker: false,
+    fullscreenButton: false,
+    geocoder: false,
+    homeButton: false,
+    infoBox: false,
+    sceneModePicker: false,
+    selectionIndicator: false,
+    timeline: false,
+    navigationHelpButton: false,
+    scene3DOnly: true,
+  });
+
+  // Optional imagery/terrain upgrades happen after boot and can fail safely.
+  if (Cesium.createWorldTerrainAsync) {
+    Cesium.createWorldTerrainAsync({ requestVertexNormals: true })
+      .then(t => { if (viewer && !viewer.isDestroyed()) viewer.terrainProvider = t; })
+      .catch(e => console.warn('Terrain unavailable:', e));
+  }
+
+  if (Cesium.IonImageryProvider && Cesium.ImageryLayer?.fromProviderAsync) {
+    Cesium.ImageryLayer.fromProviderAsync(Cesium.IonImageryProvider.fromAssetId(3954))
+      .then(layer => { if (viewer && !viewer.isDestroyed()) viewer.imageryLayers.add(layer); })
+      .catch(e => console.warn('Sentinel imagery unavailable:', e));
+  }
+} catch (error) {
+  console.error('Cesium initialization failed; continuing with data dashboard:', error);
+  document.getElementById('cesium-container').innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:rgba(232,236,244,.35);font:11px Space Mono,monospace;letter-spacing:.08em">GLOBE UNAVAILABLE — DATA FEED ACTIVE</div>';
+}
 
 // Dark atmosphere
 viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#050810');
@@ -1044,6 +1066,7 @@ viewer.scene.moon.show = false;
 flyTo(state.lat, state.lon, 2000000);
 
 function flyTo(lat, lon, height = 2000000) {
+  if (!viewer || viewer.isDestroyed()) return;
   viewer.camera.flyTo({
     destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
     duration: 1.8,
@@ -1052,7 +1075,7 @@ function flyTo(lat, lon, height = 2000000) {
 }
 
 // Click on globe → fetch data for clicked point
-viewer.screenSpaceEventHandler.setInputAction(async (click) => {
+if (viewer) viewer.screenSpaceEventHandler.setInputAction(async (click) => {
   const pos = viewer.scene.pickPosition(click.position);
   if (!pos) return;
   const carto = Cesium.Cartographic.fromCartesian(pos);
@@ -1083,6 +1106,7 @@ document.getElementById('btn-wind-layer').addEventListener('click', function() {
 
 // ─── AQI HEATMAP ON GLOBE ────────────────────────────────────────────────────
 async function renderAQIHeatmap() {
+  if (!viewer || viewer.isDestroyed()) return;
   // Remove old
   state.aqiEntities.forEach(e => viewer.entities.remove(e));
   state.aqiEntities = [];
@@ -1111,6 +1135,7 @@ async function renderAQIHeatmap() {
 
 // ─── FIRE LAYER ──────────────────────────────────────────────────────────────
 function renderFireLayer() {
+  if (!viewer || viewer.isDestroyed()) return;
   state.fireEntities.forEach(e => viewer.entities.remove(e));
   state.fireEntities = [];
   if (!layers.fire) return;
@@ -1230,24 +1255,23 @@ async function fetchAll() {
 
 // ─── API FETCHERS ─────────────────────────────────────────────────────────────
 async function apiGet(path) {
+  if (STATIC_DEMO_MODE) {
+    const demo = demoResponse(path);
+    if (demo) {
+      if (!shownStaticDemoToast) {
+        shownStaticDemoToast = true;
+        toast('Running in static demo mode. Add ?api=<your_backend>/api/v1 to use live backend.', 'info');
+      }
+      return demo;
+    }
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   try {
     const resp = await fetch(API_BASE + path, { signal: controller.signal });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     return resp.json();
-  } catch (e) {
-    if (STATIC_DEMO_MODE) {
-      const demo = demoResponse(path);
-      if (demo) {
-        if (!shownStaticDemoToast) {
-          shownStaticDemoToast = true;
-          toast('Running in static demo mode. Add ?api=<your_backend>/api/v1 to use live backend.', 'info');
-        }
-        return demo;
-      }
-    }
-    throw e;
   } finally {
     clearTimeout(timeoutId);
   }
@@ -1397,6 +1421,7 @@ function updateFreshnessindicator() {
 
 // ─── GLOBAL CITY MARKERS ─────────────────────────────────────────────────────
 function renderCityMarkers() {
+  if (!viewer || viewer.isDestroyed()) return;
   state.cityEntities.forEach(e => viewer.entities.remove(e));
   state.cityEntities = [];
 
@@ -1866,3 +1891,7 @@ setInterval(fetchAll, 5 * 60 * 1000);
 </script>
 </body>
 </html>
+
+
+// Boot the data dashboard even when Cesium is unavailable.
+fetchAll().catch(error => console.error('Initial data load failed:', error));
