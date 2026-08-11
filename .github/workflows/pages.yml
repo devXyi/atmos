@@ -144,8 +144,18 @@ jobs:
           if recovery not in text:
               text = text.replace(compat, compat + '\n' + recovery, 1)
 
+          # Presentation layers are kept outside index.html so they cannot
+          # disturb the dashboard's existing application/data code.
+          head = text.find('</head>')
+          if head < 0:
+              raise SystemExit('Missing </head>')
+          css = '<link rel="stylesheet" href="./liquid-glass.css">'
+          if css not in text:
+              text = text[:head] + '  ' + css + '\n' + text[head:]
+
           runtime = '<script src="./atmos-runtime.js"></script>'
           polish = '<script src="./globe-polish.js"></script>'
+          labels = '<script src="./globe-ui-polish.js"></script>'
           guard = '<script src="./boot-guard.js"></script>'
           body = text.find('</body>')
           if body < 0:
@@ -158,6 +168,12 @@ jobs:
               else:
                   body = text.find('</body>')
                   text = text[:body] + '  ' + polish + '\n' + text[body:]
+          if labels not in text:
+              if guard in text:
+                  text = text.replace(guard, '  ' + labels + '\n  ' + guard, 1)
+              else:
+                  body = text.find('</body>')
+                  text = text[:body] + '  ' + labels + '\n' + text[body:]
           if guard not in text:
               body = text.find('</body>')
               text = text[:body] + '  ' + guard + '\n' + text[body:]
@@ -185,11 +201,15 @@ jobs:
           assert '<script src="./runtime-compat.js"></script>' in index, 'runtime compatibility layer missing'
           assert '<script src="./globe-recovery.js"></script>' in index, 'globe recovery layer missing'
           assert '<script src="./globe-polish.js"></script>' in index, 'globe polish layer missing'
+          assert '<script src="./globe-ui-polish.js"></script>' in index, 'visible globe labels layer missing'
           assert '<script src="./atmos-runtime.js"></script>' in index, 'location runtime missing'
           assert '<script src="./boot-guard.js"></script>' in index, 'boot guard missing'
+          assert '<link rel="stylesheet" href="./liquid-glass.css">' in index, 'liquid glass stylesheet missing'
           assert Path('frontend/runtime-compat.js').exists()
           assert Path('frontend/globe-recovery.js').exists()
           assert Path('frontend/globe-polish.js').exists()
+          assert Path('frontend/globe-ui-polish.js').exists()
+          assert Path('frontend/liquid-glass.css').exists()
           assert Path('frontend/atmos-runtime.js').exists()
           assert Path('frontend/boot-guard.js').exists()
           print('Pages artifact validation passed')
