@@ -45,12 +45,69 @@ jobs:
           atmosphere_end = text.find('// Fly to initial location', atmosphere_start)
           if atmosphere_start < 0 or atmosphere_end < 0:
               raise SystemExit('Cesium atmosphere section markers not found')
+
+          # Replace the original Cesium boot block. Cesium 1.122 exposes
+          # Viewer as a readonly export, so runtime wrappers must never assign
+          # to Cesium.Viewer. Build the safe options before construction instead.
+          viewer_start = text.find('let viewer = null;')
+          if viewer_start < 0 or viewer_start > atmosphere_start:
+              raise SystemExit('Cesium viewer block not found')
+          viewer_block = '''let viewer = null;
+          try {
+            const baseViewerOptions = {
+              terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+              baseLayer: false,
+              animation: false,
+              baseLayerPicker: false,
+              fullscreenButton: false,
+              geocoder: false,
+              homeButton: false,
+              infoBox: false,
+              sceneModePicker: false,
+              selectionIndicator: false,
+              timeline: false,
+              navigationHelpButton: false,
+              scene3DOnly: true,
+            };
+            const viewerOptions = typeof window.__atmosCesiumOptions === 'function'
+              ? window.__atmosCesiumOptions(baseViewerOptions)
+              : baseViewerOptions;
+            viewer = new Cesium.Viewer('cesium-container', viewerOptions);
+
+            // Public, token-free imagery keeps the globe visible on Pages.
+            // Cesium ion terrain/imagery is intentionally optional and is not
+            // allowed to block globe construction or flood the console with 401s.
+            if (Cesium.OpenStreetMapImageryProvider && viewer && !viewer.isDestroyed()) {
+              try {
+                const osm = new Cesium.OpenStreetMapImageryProvider({
+                  url: 'https://tile.openstreetmap.org/'
+                });
+                viewer.imageryLayers.addImageryProvider(osm);
+              } catch (imageryError) {
+                console.warn('OpenStreetMap imagery unavailable; retaining bare globe:', imageryError);
+              }
+            }
+          } catch (error) {
+            console.error('Cesium initialization failed; continuing with data dashboard:', error);
+            window.__atmosCesiumFailure = String(error && error.message || error);
+            if (typeof window.__atmosDrawFallbackGlobe === 'function') {
+              window.__atmosDrawFallbackGlobe();
+            } else {
+              const host = document.getElementById('cesium-container');
+              if (host) host.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:rgba(232,236,244,.35);font:11px Space Mono,monospace;letter-spacing:.08em">GLOBE UNAVAILABLE — DATA FEED ACTIVE</div>';
+            }
+          }
+
+          '''
+          text = text[:viewer_start] + viewer_block + text[atmosphere_start:]
+
+          # Guard all atmosphere operations against a failed Viewer.
           atmosphere = '''// Dark atmosphere — only when the Cesium Viewer exists.
           if (viewer && typeof viewer.isDestroyed === 'function' && !viewer.isDestroyed()) {
             viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#050810');
             viewer.scene.skyAtmosphere.hueShift = -0.97;
             viewer.scene.skyAtmosphere.saturationShift = -0.95;
-            viewer.scene.brightnessShift = -0.7;
+            viewer.scene.skyAtmosphere.brightnessShift = -0.7;
             viewer.scene.skyBox.show = false;
             viewer.scene.sun.show = false;
             viewer.scene.moon.show = false;
@@ -59,6 +116,7 @@ jobs:
           '''
           text = text[:atmosphere_start] + atmosphere + text[atmosphere_end:]
 
+          # Device location is optional and must never be a startup gate.
           location_start = text.find('// ─── AUTO-DETECT LOCATION')
           location_end = text.find('// ─── AUTO-REFRESH every 5 minutes', location_start)
           if location_start < 0 or location_end < 0:
@@ -93,12 +151,6 @@ jobs:
                   additions += '  ' + guard + '\n'
               text = text[:body] + additions + text[body:]
 
-          # The fallback script must execute after the dashboard's inline script
-          # so it can detect whether Cesium actually produced a viewer canvas.
-          fallback = '<script src="./globe-recovery.js"></script>'
-          # It is already loaded before the inline script for constructor recovery;
-          # do not duplicate it at the end.
-
           path.write_text(text, encoding='utf-8')
           print('Deterministic Pages artifact built')
 
@@ -110,7 +162,10 @@ jobs:
           assert index.rstrip().endswith('</html>'), 'HTML has trailing content after </html>'
           assert 'Initial data load failed' not in index, 'legacy boot text leaked into HTML'
           assert 'https://cesium.com/downloads/cesiumjs/releases/1.122/' in index, 'Cesium 1.122 missing'
-          assert 'if (viewer && typeof viewer.isDestroyed === \'function\'' in index, 'Cesium failure guard missing'
+          assert 'new Cesium.Viewer(\'cesium-container\'' in index, 'Cesium Viewer construction missing'
+          assert 'Cesium.Viewer = ' not in index, 'Readonly Cesium.Viewer must never be replaced'
+          assert 'ImageryLayer.fromProviderAsync' not in index, 'Invalid Promise chaining must not be present'
+          assert 'api.cesium.com/v1/assets' not in index, 'Ion boot-time asset requests must not block Pages'
           assert '<script src="./runtime-compat.js"></script>' in index, 'runtime compatibility layer missing'
           assert '<script src="./globe-recovery.js"></script>' in index, 'globe recovery layer missing'
           assert '<script src="./atmos-runtime.js"></script>' in index, 'location runtime missing'
