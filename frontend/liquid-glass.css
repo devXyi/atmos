@@ -1,0 +1,86 @@
+/* Atmos Liquid Glass UI
+ * Presentation-only layer. No dashboard features or data contracts are changed.
+ */
+:root {
+  --glass-bg: rgba(10, 15, 27, 0.48);
+  --glass-bg-hi: rgba(22, 31, 49, 0.54);
+  --glass-border: rgba(190, 225, 255, 0.13);
+  --glass-highlight: rgba(255, 255, 255, 0.12);
+  --glass-shadow: rgba(0, 0, 0, 0.30);
+}
+
+#left-panel,
+#right-panel {
+  background:
+    radial-gradient(circle at 20% 0%, rgba(0, 212, 255, 0.055), transparent 38%),
+    linear-gradient(180deg, rgba(16, 23, 38, 0.58), rgba(5, 8, 16, 0.42));
+  border-color: var(--glass-border);
+  backdrop-filter: blur(22px) saturate(135%);
+  -webkit-backdrop-filter: blur(22px) saturate(135%);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 12px 36px var(--glass-shadow);
+}
+
+#left-panel { border-right: 1px solid var(--glass-border); }
+#right-panel { border-left: 1px solid var(--glass-border); }
+
+#left-panel .card,
+#right-panel .card {
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,0.075), rgba(255,255,255,0.025) 48%, rgba(0,0,0,0.08)),
+    rgba(13, 20, 34, 0.43);
+  border: 1px solid rgba(202, 229, 255, 0.12);
+  border-radius: 14px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.09),
+    inset 0 0 0 1px rgba(255,255,255,0.018),
+    0 8px 24px rgba(0,0,0,0.18);
+  backdrop-filter: blur(18px) saturate(125%);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  transition: border-color .2s ease, background .2s ease, transform .2s ease;
+}
+
+#left-panel .card::before,
+#right-panel .card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, rgba(255,255,255,0.055), transparent 30%, transparent 72%, rgba(0,212,255,0.025));
+}
+
+#left-panel .card:hover,
+#right-panel .card:hover {
+  border-color: rgba(170, 220, 255, 0.20);
+  background:
+    linear-gradient(145deg, rgba(255,255,255,0.085), rgba(255,255,255,0.028)),
+    rgba(13, 20, 34, 0.48);
+}
+
+#left-panel .card-title,
+#right-panel .card-title {
+  color: rgba(205, 225, 245, 0.48);
+  text-shadow: 0 1px 12px rgba(0,0,0,0.45);
+}
+
+#left-panel .stat-value,
+#right-panel .stat-value,
+#left-panel .aqi-num,
+#right-panel .aqi-num {
+  text-shadow: 0 0 18px rgba(255,255,255,0.08);
+}
+
+.globe-search input,
+.globe-search button,
+.hud-card {
+  background: rgba(9, 15, 27, 0.48);
+  border-color: rgba(190, 225, 255, 0.15);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 8px 22px rgba(0,0,0,0.16);
+  backdrop-filter: blur(20px) saturate(135%);
+  -webkit-backdrop-filter: blur(20px) saturate(135%);
+}
+
+@media (max-width: 900px) {
+  #left-panel, #right-panel { backdrop-filter: blur(16px) saturate(125%); -webkit-backdrop-filter: blur(16px) saturate(125%); }
+}
