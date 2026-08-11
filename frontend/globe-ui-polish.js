@@ -46,30 +46,21 @@
     return Math.hypot(bLat - aLat, dLon * Math.cos(aLat * Math.PI / 180));
   }
 
+  function selectedDefaultCity() {
+    const coords = currentCoords();
+    if (!coords) return CITIES[0];
+    return CITIES.reduce((nearest, city) => {
+      return distance(coords.lat, coords.lon, city.lat, city.lon) < distance(coords.lat, coords.lon, nearest.lat, nearest.lon)
+        ? city : nearest;
+    }, CITIES[0]);
+  }
+
   function render(v) {
     v.entities.values
       .filter(e => e.__atmosEnglishCity || e.__atmosVisibleCityLabel)
       .forEach(e => v.entities.remove(e));
 
-    const coords = currentCoords();
-    let selected = null;
-    if (coords) {
-      let best = Infinity;
-      CITIES.forEach(city => {
-        const d = distance(coords.lat, coords.lon, city.lat, city.lon);
-        if (d < best) {
-          best = d;
-          selected = city;
-        }
-      });
-    }
-
-    // OFF: one clean label for the current/default location.
-    // If the device is not near one of the monitored cities, fall back to the
-    // first monitored city rather than leaving the globe completely unlabeled.
-    const visibleCities = allPlacesEnabled
-      ? CITIES
-      : [selected || CITIES[0]];
+    const visibleCities = allPlacesEnabled ? CITIES : [selectedDefaultCity()];
 
     visibleCities.forEach(city => {
       const aqi = getAQI(city.name);
@@ -104,6 +95,33 @@
       });
       entity.__atmosVisibleCityLabel = true;
     });
+  }
+
+  // globe-polish.js independently maintains its monitored-city labels. Keep
+  // that layer compatible with this toggle: OFF means exactly one default label.
+  function enforceDefaultLabelOnly(v) {
+    if (allPlacesEnabled) return;
+    const defaultCity = selectedDefaultCity();
+    let defaultEntities = [];
+
+    v.entities.values
+      .filter(e => e.__atmosEnglishCity || e.__atmosVisibleCityLabel)
+      .forEach(entity => {
+        try {
+          const cart = entity.position?.getValue?.(Cesium.JulianDate.now());
+          if (!cart) return;
+          const geo = Cesium.Cartographic.fromCartesian(cart);
+          const lat = Cesium.Math.toDegrees(geo.latitude);
+          const lon = Cesium.Math.toDegrees(geo.longitude);
+          const d = distance(defaultCity.lat, defaultCity.lon, lat, lon);
+          if (d < 0.8) defaultEntities.push(entity);
+          else entity.show = false;
+        } catch (_) {
+          entity.show = false;
+        }
+      });
+
+    defaultEntities.forEach(entity => { entity.show = true; });
   }
 
   function installGlobalPlaceLayer(v) {
@@ -165,6 +183,7 @@
       installGlobalPlaceLayer(v);
       if (placeLayer) placeLayer.show = allPlacesEnabled;
       render(v);
+      enforceDefaultLabelOnly(v);
       if (v.scene?.requestRender) v.scene.requestRender();
     }
     updateMenu();
@@ -238,6 +257,7 @@
         last = signature;
         render(v);
       }
+      enforceDefaultLabelOnly(v);
     }, 500);
     setTimeout(() => clearInterval(timer), 60000);
   }
