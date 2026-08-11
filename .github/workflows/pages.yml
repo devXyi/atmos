@@ -105,7 +105,7 @@ jobs:
             viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#050810');
             viewer.scene.skyAtmosphere.hueShift = -0.97;
             viewer.scene.skyAtmosphere.saturationShift = -0.95;
-            viewer.scene.brightnessShift = -0.7;
+            viewer.scene.skyAtmosphere.brightnessShift = -0.7;
             viewer.scene.skyBox.show = false;
             viewer.scene.sun.show = false;
             viewer.scene.moon.show = false;
@@ -114,15 +114,12 @@ jobs:
           '''
           text = text[:atmosphere_start] + atmosphere + text[atmosphere_end:]
 
-          # Expose the dashboard state to the post-boot globe polish layer.
           state_marker = '// ─── CESIUM GLOBE ────────────────────────────────────────────────────────────'
           if state_marker not in text:
               raise SystemExit('Cesium globe marker missing')
           if 'window.state = state;' not in text:
               text = text.replace(state_marker, 'window.state = state;\n\n' + state_marker, 1)
 
-          # Keep Earth inside the center column. 7.2 Mm is an Earth-scale view;
-          # location selections use a slightly closer but still panel-safe view.
           text = text.replace('flyTo(state.lat, state.lon, 2000000);', 'flyTo(state.lat, state.lon, 7200000);', 1)
           text = text.replace('flyTo(lat, lon, 800000);', 'flyTo(lat, lon, 4500000);', 1)
 
@@ -181,6 +178,7 @@ jobs:
           assert 'window.state = state;' in index, 'State exposure missing'
           assert 'flyTo(state.lat, state.lon, 7200000);' in index, 'Earth fit height missing'
           assert 'flyTo(lat, lon, 4500000);' in index, 'Location camera height missing'
+          assert 'viewer.scene.skyAtmosphere.brightnessShift = -0.7;' in index, 'Atmosphere property missing'
           assert 'Cesium.Viewer = ' not in index, 'Readonly Cesium.Viewer must never be replaced'
           assert 'ImageryLayer.fromProviderAsync' not in index, 'Invalid Promise chaining must not be present'
           assert 'api.cesium.com/v1/assets' not in index, 'Ion boot-time asset requests must not block Pages'
