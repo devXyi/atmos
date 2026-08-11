@@ -1,7 +1,7 @@
 /* Atmos globe polish layer.
  * Runs after the dashboard script on GitHub Pages.
  * Removes localized raster labels, restores compact English city labels,
- * fits Earth inside the center panel, and makes pollution-source fallback
+ * centers Earth in the globe viewport, and makes pollution-source fallback
  * location-aware instead of returning the same profile everywhere.
  */
 (function () {
@@ -50,8 +50,13 @@
   }
   function fitEarth(v,immediate){
     const s=window.state||{},lat=Number(s.lat)||20,lon=Number(s.lon)||0;
-    v.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(lon,lat,7200000),duration:immediate?0:1.1,orientation:{heading:0,pitch:Cesium.Math.toRadians(-35),roll:0}});
-    v.scene.screenSpaceCameraController.minimumZoomDistance=900000;
+    // The old -35° pitch looked toward the horizon, which pushed the Earth
+    // into the lower part of the viewport. Look straight down at the selected
+    // point so the Earth is geometrically centered in the globe panel.
+    const destination=Cesium.Cartesian3.fromDegrees(lon,lat,9000000);
+    const options={destination,duration:immediate?0:1.1,orientation:{heading:0,pitch:Cesium.Math.toRadians(-90),roll:0}};
+    v.camera.flyTo(options);
+    v.scene.screenSpaceCameraController.minimumZoomDistance=1200000;
     v.scene.screenSpaceCameraController.maximumZoomDistance=22000000;
   }
   function patchSourceData(){
@@ -64,9 +69,7 @@
       const locations=Array.isArray(window.state?.locations)?window.state.locations:[];
       let nearest=null,best=Infinity;
       locations.forEach(loc=>{const d=Math.hypot(Number(loc.lat)-lat,Number(loc.lon)-lon);if(d<best){best=d;nearest=loc;}});
-      if(!nearest){
-        CITY_COORDS.forEach(([name,country,cLat,cLon])=>{const d=Math.hypot(cLat-lat,cLon-lon);if(d<best){best=d;nearest={city:name,country,lat:cLat,lon:cLon};}});
-      }
+      if(!nearest){CITY_COORDS.forEach(([name,country,cLat,cLon])=>{const d=Math.hypot(cLat-lat,cLon-lon);if(d<best){best=d;nearest={city:name,country,lat:cLat,lon:cLon};}});}
       const name=nearest?cityName(nearest):'';
       const profile=SOURCE_PROFILES[name]||[['Traffic / transport',62],['Dust / construction',48],['Industrial activity',44],['Biomass / open burning',37]];
       return {sources:profile.map(([label,confidence],i)=>({label,confidence:Math.max(20,Math.min(95,confidence+(Math.round(Math.abs(lat+lon))%7)-i)),indicators:['PM2.5',i%2?'PM10':'NO₂','regional pattern']}))};
