@@ -1,0 +1,89 @@
+name: Deploy CARTO-keyed Pages artifact
+
+on:
+  workflow_run:
+    workflows: [Deploy to GitHub Pages]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-carto-finalizer
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download the successful Pages artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: github-pages
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ./site
+
+      - name: Inject CARTO key into the deployed artifact
+        env:
+          CARTO_KEY: ${{ secrets.CARTO_KEY }}
+        shell: python
+        run: |
+          from pathlib import Path
+          import os
+
+          key = os.environ.get('CARTO_KEY', '').strip()
+          if not key:
+              raise SystemExit('CARTO_KEY secret is missing')
+
+          path = Path('site/globe-polish.js')
+          if not path.exists():
+              raise SystemExit(f'Missing deployed globe script: {path}')
+
+          text = path.read_text(encoding='utf-8')
+          old = "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png"
+          new = old + "?key=" + key
+
+          if new in text:
+              print('CARTO key is already present in the artifact')
+          elif old in text:
+              text = text.replace(old, new, 1)
+              path.write_text(text, encoding='utf-8')
+              print('CARTO key injected into deployed globe script')
+          else:
+              raise SystemExit('Expected CARTO raster URL was not found; refusing to deploy an unverified artifact')
+
+      - name: Validate CARTO-keyed artifact
+        shell: python
+        run: |
+          from pathlib import Path
+          import os
+
+          text = Path('site/globe-polish.js').read_text(encoding='utf-8')
+          key = os.environ.get('CARTO_KEY', '').strip()
+          expected = 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png?key=' + key
+
+          assert expected in text, 'CARTO key was not injected into the deployed artifact'
+          assert 'dark_nolabels/{z}/{x}/{y}{r}.png' in text, 'CARTO raster URL is missing'
+          assert 'credit: \'© OpenStreetMap contributors © CARTO\'' in text, 'CARTO/OSM attribution is missing'
+          print('CARTO artifact validation passed')
+        env:
+          CARTO_KEY: ${{ secrets.CARTO_KEY }}
+
+      - name: Upload corrected Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./site
+
+      - name: Deploy corrected Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@v4
