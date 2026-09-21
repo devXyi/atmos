@@ -28,6 +28,33 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      - name: Validate CARTO key
+        env:
+          CARTO_KEY: ${{ secrets.CARTO_KEY }}
+        run: |
+          if [ -z "$CARTO_KEY" ]; then
+            echo "CARTO_KEY secret is not configured."
+            exit 1
+          fi
+
+      - name: Inject CARTO key into Pages build artifact
+        env:
+          CARTO_KEY: ${{ secrets.CARTO_KEY }}
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          path = Path('frontend/carto-config.js')
+          text = path.read_text(encoding='utf-8')
+          key = os.environ.get('CARTO_KEY', '')
+          if not key:
+              raise SystemExit('CARTO_KEY is empty')
+          if '__ATMOS_CARTO_KEY__' not in text:
+              raise SystemExit('CARTO placeholder missing')
+          path.write_text(text.replace('__ATMOS_CARTO_KEY__', key), encoding='utf-8')
+          print('CARTO configuration prepared for Pages artifact')
+
       - name: Build deterministic Pages artifact
         shell: python
         run: |
@@ -137,12 +164,15 @@ jobs:
           cesium = '<script src="https://cesium.com/downloads/cesiumjs/releases/1.122/Build/Cesium/Cesium.js"></script>'
           compat = '<script src="./runtime-compat.js"></script>'
           recovery = '<script src="./globe-recovery.js"></script>'
+          carto = '<script src="./carto-config.js"></script>'
           if cesium not in text:
               raise SystemExit('Cesium 1.122 script missing')
           if compat not in text:
               text = text.replace(cesium, cesium + '\n' + compat, 1)
           if recovery not in text:
               text = text.replace(compat, compat + '\n' + recovery, 1)
+          if carto not in text:
+              text = text.replace(recovery, recovery + '\n' + carto, 1)
 
           # Presentation layers are kept outside index.html so they cannot
           # disturb the dashboard's existing application/data code.
@@ -186,6 +216,7 @@ jobs:
         run: |
           from pathlib import Path
           index = Path('frontend/index.html').read_text(encoding='utf-8')
+          carto = Path('frontend/carto-config.js').read_text(encoding='utf-8')
           assert index.rstrip().endswith('</html>'), 'HTML has trailing content after </html>'
           assert 'Initial data load failed' not in index, 'legacy boot text leaked into HTML'
           assert 'https://cesium.com/downloads/cesiumjs/releases/1.122/' in index, 'Cesium 1.122 missing'
@@ -195,6 +226,9 @@ jobs:
           assert 'flyTo(state.lat, state.lon, 7200000);' in index, 'Earth fit height missing'
           assert 'flyTo(lat, lon, 4500000);' in index, 'Location camera height missing'
           assert 'viewer.scene.skyAtmosphere.brightnessShift = -0.7;' in index, 'Atmosphere property missing'
+          assert '<script src="./carto-config.js"></script>' in index, 'CARTO configuration missing'
+          assert '__ATMOS_CARTO_KEY__' not in carto, 'CARTO placeholder was not replaced'
+          assert 'window.ATMOS_CARTO_KEY' in carto, 'CARTO runtime key missing'
           assert 'Cesium.Viewer = ' not in index, 'Readonly Cesium.Viewer must never be replaced'
           assert 'ImageryLayer.fromProviderAsync' not in index, 'Invalid Promise chaining must not be present'
           assert 'api.cesium.com/v1/assets' not in index, 'Ion boot-time asset requests must not block Pages'
@@ -212,6 +246,7 @@ jobs:
           assert Path('frontend/liquid-glass.css').exists()
           assert Path('frontend/atmos-runtime.js').exists()
           assert Path('frontend/boot-guard.js').exists()
+          assert Path('frontend/carto-config.js').exists()
           print('Pages artifact validation passed')
 
       - name: Upload artifact
