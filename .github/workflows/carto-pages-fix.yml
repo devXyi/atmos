@@ -1,3 +1,4 @@
+# Final deployment pass: the public Pages artifact must contain the CARTO key.
 name: Deploy CARTO-keyed Pages artifact
 
 on:
